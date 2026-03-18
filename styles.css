@@ -33,6 +33,16 @@ body,
   color: #323232;
 }
 
+.panel-toggle.active {
+  background: #e0e0e0;
+  color: #323232;
+  border-color: #aaa;
+}
+
+.panel-toggle.active:hover {
+  background: #d0d0d0;
+}
+
 #home-container .esri-widget--button {
   border: 1px solid #ccc !important;
   border-radius: 3px !important;
@@ -49,7 +59,7 @@ body,
 }
 
 .panel {
-  max-height: 350px;
+  height: 300px;
   width: 300px;
   overflow: hidden;
   display: flex;
@@ -60,9 +70,20 @@ body,
   box-shadow: 0 2px 10px rgba(0, 0, 0, 0.2);
 }
 
-#layer-list-container {
+
+.panel-title {
+  padding: 6px 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #323232;
+  border-bottom: 1px solid #e0e0e0;
+}
+
+#layer-list-container,
+#legend-container {
   overflow-y: auto;
   flex: 1;
+  min-height: 0;
 }
 
 .hidden {

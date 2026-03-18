@@ -36,13 +36,13 @@ require([
 
     const legendToggle = document.createElement("button");
     legendToggle.id = "legend-toggle";
-    legendToggle.className = "panel-toggle";
+    legendToggle.className = "panel-toggle active";
     legendToggle.textContent = "Legend";
     toggleBar.appendChild(legendToggle);
 
     const layersToggle = document.createElement("button");
     layersToggle.id = "layers-toggle";
-    layersToggle.className = "panel-toggle";
+    layersToggle.className = "panel-toggle active";
     layersToggle.textContent = "Layers";
     toggleBar.appendChild(layersToggle);
 
@@ -53,18 +53,32 @@ require([
     panelsContainer.id = "panels-container";
     document.body.appendChild(panelsContainer);
 
-    // Legend panel (hidden by default)
+    // Legend panel (visible by default)
+    const legendWrapper = document.createElement("div");
+    legendWrapper.id = "legend-wrapper";
+    legendWrapper.classList.add("panel");
+    panelsContainer.appendChild(legendWrapper);
+
+    const legendTitle = document.createElement("div");
+    legendTitle.className = "panel-title";
+    legendTitle.textContent = "Legend";
+    legendWrapper.appendChild(legendTitle);
+
     const legendContainer = document.createElement("div");
     legendContainer.id = "legend-container";
-    legendContainer.classList.add("panel", "hidden");
-    panelsContainer.appendChild(legendContainer);
+    legendWrapper.appendChild(legendContainer);
     new Legend({ view, container: legendContainer });
 
-    // Layer list panel (hidden by default)
+    // Layer list panel (visible by default)
     const layerListWrapper = document.createElement("div");
     layerListWrapper.id = "layer-list-wrapper";
-    layerListWrapper.classList.add("panel", "hidden");
+    layerListWrapper.classList.add("panel");
     panelsContainer.appendChild(layerListWrapper);
+
+    const layersTitle = document.createElement("div");
+    layersTitle.className = "panel-title";
+    layersTitle.textContent = "Layers";
+    layerListWrapper.appendChild(layersTitle);
 
     const layerSearchWrapper = document.createElement("div");
     layerSearchWrapper.id = "layer-search-wrapper";
@@ -119,10 +133,12 @@ require([
 
     // Toggle handlers
     legendToggle.addEventListener("click", () => {
-      legendContainer.classList.toggle("hidden");
+      legendWrapper.classList.toggle("hidden");
+      legendToggle.classList.toggle("active");
     });
     layersToggle.addEventListener("click", () => {
       layerListWrapper.classList.toggle("hidden");
+      layersToggle.classList.toggle("active");
     });
   });
 });
