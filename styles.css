@@ -7,20 +7,103 @@ body,
   width: 100%;
 }
 
-#legend-container {
-  max-height: 250px;
-  width: 300px;
-  overflow: auto;
-  background-color: white;
-  border: 1px solid #ccc;
+#toggle-bar {
+  display: flex;
+  gap: 6px;
+  background: white;
+  padding: 6px;
   border-radius: 4px;
-  padding: 8px;
   box-shadow: 0 2px 10px rgba(0, 0, 0, 0.2);
 }
 
-.home-container {
+.panel-toggle {
+  background: white;
+  color: #323232;
+  border: 1px solid #ccc;
+  border-radius: 3px;
+  padding: 0 10px;
+  height: 32px;
+  cursor: pointer;
+  font-size: 14px;
+  font-family: inherit;
+}
+
+.panel-toggle:hover {
+  background: #f3f3f3;
+  color: #323232;
+}
+
+#home-container .esri-widget--button {
+  border: 1px solid #ccc !important;
+  border-radius: 3px !important;
+}
+
+#panels-container {
   position: absolute;
-  top: 15px;
-  left: 55px;
+  top: 68px;
+  left: 15px;
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
   z-index: 99;
 }
+
+.panel {
+  max-height: 350px;
+  width: 300px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  background: white;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.2);
+}
+
+#layer-list-container {
+  overflow-y: auto;
+  flex: 1;
+}
+
+.hidden {
+  display: none;
+}
+
+#layer-search-wrapper {
+  position: relative;
+  border-bottom: 1px solid #e0e0e0;
+}
+
+#layer-search {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 6px 28px 6px 8px;
+  border: none;
+  border-radius: 4px 4px 0 0;
+  font-size: 13px;
+  outline: none;
+}
+
+#layer-search:focus {
+  outline: 2px solid #0079c1;
+  outline-offset: -2px;
+}
+
+#layer-search-clear {
+  position: absolute;
+  right: 6px;
+  top: 50%;
+  transform: translateY(-50%);
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 16px;
+  color: #999;
+  line-height: 1;
+  padding: 0;
+}
+
+#layer-search-clear:hover {
+  color: #323232;
+}
+
