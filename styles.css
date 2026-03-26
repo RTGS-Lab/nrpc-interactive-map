@@ -43,6 +43,24 @@ body,
   background: #d0d0d0;
 }
 
+#city-select {
+  height: 32px;
+  padding: 0 8px;
+  border: 1px solid #ccc;
+  border-radius: 3px;
+  background: white;
+  color: #323232;
+  font-size: 14px;
+  font-family: inherit;
+  cursor: pointer;
+  max-width: 180px;
+}
+
+#city-select:focus {
+  outline: 2px solid #0079c1;
+  outline-offset: -2px;
+}
+
 #home-container .esri-widget--button {
   border: 1px solid #ccc !important;
   border-radius: 3px !important;

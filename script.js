@@ -46,6 +46,12 @@ require([
     layersToggle.textContent = "Layers";
     toggleBar.appendChild(layersToggle);
 
+    // City zoom dropdown
+    const citySelect = document.createElement("select");
+    citySelect.id = "city-select";
+    citySelect.innerHTML = '<option value="">Zoom to city...</option>';
+    toggleBar.appendChild(citySelect);
+
     view.ui.add(toggleBar, { position: "top-left", index: 0 });
 
     // Panel stack container
@@ -130,6 +136,47 @@ require([
         }
       });
     });
+
+    // Populate city dropdown and handle zoom
+    const citiesLayer = view.map.allLayers.find(l => l.title && l.title.toLowerCase().includes("cities"));
+    if (citiesLayer) {
+      citiesLayer.load().then(() => {
+        const q = citiesLayer.createQuery();
+        q.outFields = ["CTU_NAME"];
+        q.returnGeometry = false;
+        q.orderByFields = ["CTU_NAME"];
+        return citiesLayer.queryFeatures(q);
+      }).then(result => {
+        const names = [...new Set(
+          result.features.map(f => f.attributes.CTU_NAME).filter(Boolean)
+        )].sort();
+        names.forEach(name => {
+          const opt = document.createElement("option");
+          opt.value = name;
+          opt.textContent = name;
+          citySelect.appendChild(opt);
+        });
+      });
+
+      citySelect.addEventListener("change", () => {
+        const selected = citySelect.value;
+        if (!selected) return;
+
+        const q = citiesLayer.createQuery();
+        q.where = `CTU_NAME = '${selected.replace(/'/g, "''")}'`;
+        q.returnGeometry = true;
+        q.outSpatialReference = view.spatialReference;
+
+        citiesLayer.queryFeatures(q).then(result => {
+          if (!result.features.length) return;
+          let extent = result.features[0].geometry.extent;
+          for (let i = 1; i < result.features.length; i++) {
+            extent = extent.union(result.features[i].geometry.extent);
+          }
+          view.goTo(extent.expand(1.5));
+        });
+      });
+    }
 
     // Toggle handlers
     legendToggle.addEventListener("click", () => {
