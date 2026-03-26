@@ -114,16 +114,36 @@ require([
     new LayerList({ view, container: layerListContainer });
 
     layerSearch.addEventListener("input", () => {
-      const term = layerSearch.value.toLowerCase();
+      const term = layerSearch.value.toLowerCase().trim();
       layerSearchClear.classList.toggle("hidden", !term);
 
       // Try calcite-list-item (ArcGIS 4.29+)
       const calciteItems = layerListContainer.querySelectorAll("calcite-list-item");
       if (calciteItems.length > 0) {
+        if (!term) {
+          calciteItems.forEach(item => (item.style.display = ""));
+          return;
+        }
+
+        // Hide everything first, then reveal matching leaves + their ancestor groups
+        calciteItems.forEach(item => (item.style.display = "none"));
+
         calciteItems.forEach(item => {
-          // label may be a JS property, an attribute, or in text content
-          const label = (item.label || item.getAttribute("label") || item.textContent || "").toLowerCase();
-          item.style.display = !term || label.includes(term) ? "" : "none";
+          // Skip group items (they contain nested calcite-list-items)
+          if (item.querySelectorAll("calcite-list-item").length > 0) return;
+
+          const label = (item.label || item.getAttribute("label") || "").toLowerCase();
+          if (!label.includes(term)) return;
+
+          // Show this leaf and walk up to reveal its parent group(s)
+          item.style.display = "";
+          let el = item.parentElement;
+          while (el && el !== layerListContainer) {
+            if (el.tagName?.toLowerCase() === "calcite-list-item") {
+              el.style.display = "";
+            }
+            el = el.parentElement;
+          }
         });
         return;
       }
