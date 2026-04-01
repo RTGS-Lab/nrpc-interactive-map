@@ -12,6 +12,9 @@
   <!-- External Styles -->
   <link rel="stylesheet" href="styles.css" />
 
+  <!-- JSZip must load BEFORE ArcGIS to avoid AMD multipleDefine conflict -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+
   <!-- ArcGIS JavaScript API -->
   <script src="https://js.arcgis.com/4.29/"></script>
 </head>

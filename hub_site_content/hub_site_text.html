@@ -1,0 +1,657 @@
+<style>
+    .nrpc-tabs { font-family: inherit; }
+    .tab-anchor { display: block; height: 0; overflow: hidden; }
+    .tab-nav { display: flex; gap: 3px; margin-top: 8px; flex-wrap: wrap; }
+    .tab-nav a {
+      display: inline-block;
+      padding: 8px 16px;
+      text-decoration: none;
+      background: #f0f0f0;
+      border: 1px solid #ccc;
+      border-bottom: none;
+      border-radius: 4px 4px 0 0;
+      font-weight: bold;
+      color: #555;
+    }
+    .tab-nav a:hover { background: #e2e2e2; }
+    .tab-content {
+      border: 1px solid #ccc;
+      padding: 14px 16px;
+      border-radius: 0 4px 4px 4px;
+      height: 320px;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+    }
+
+    /* All panels fill the tab-content height */
+    .panel-1, .panel-2, .panel-3, .panel-4, .panel-5, .panel-6 {
+      flex: 1;
+      min-height: 0;
+    }
+
+    /* Non-carousel panels scroll their own content */
+    .panel-1, .panel-2, .panel-6 {
+      overflow-y: auto;
+    }
+
+    /* Default: tab1 appears active */
+    .tab-nav a[href="#nrpc-tab1"] {
+      background: #ffffff;
+      color: #222;
+      border-bottom: 1px solid #ffffff;
+      position: relative;
+      top: 1px;
+    }
+
+    /* Remove tab1 active style when another tab or slide is targeted */
+    #nrpc-tab2:target ~ .tab-nav a[href="#nrpc-tab1"],
+    #nrpc-tab3:target ~ .tab-nav a[href="#nrpc-tab1"],
+    #nrpc-tab4:target ~ .tab-nav a[href="#nrpc-tab1"],
+    #nrpc-tab5:target ~ .tab-nav a[href="#nrpc-tab1"],
+    #nrpc-tab6:target ~ .tab-nav a[href="#nrpc-tab1"],
+    #uc1-s1:target ~ .tab-nav a[href="#nrpc-tab1"],
+    #uc1-s2:target ~ .tab-nav a[href="#nrpc-tab1"],
+    #uc1-s3:target ~ .tab-nav a[href="#nrpc-tab1"],
+    #uc1-s4:target ~ .tab-nav a[href="#nrpc-tab1"],
+    #uc2-s1:target ~ .tab-nav a[href="#nrpc-tab1"],
+    #uc2-s2:target ~ .tab-nav a[href="#nrpc-tab1"],
+    #uc2-s3:target ~ .tab-nav a[href="#nrpc-tab1"],
+    #uc2-s4:target ~ .tab-nav a[href="#nrpc-tab1"],
+    #uc2-s5:target ~ .tab-nav a[href="#nrpc-tab1"],
+    #uc3-s1:target ~ .tab-nav a[href="#nrpc-tab1"],
+    #uc3-s2:target ~ .tab-nav a[href="#nrpc-tab1"],
+    #uc3-s3:target ~ .tab-nav a[href="#nrpc-tab1"],
+    #uc3-s4:target ~ .tab-nav a[href="#nrpc-tab1"],
+    #uc3-s5:target ~ .tab-nav a[href="#nrpc-tab1"] {
+      background: #f0f0f0;
+      color: #555;
+      border-bottom: none;
+      top: 0;
+    }
+
+    /* Highlight whichever tab is directly targeted */
+    #nrpc-tab2:target ~ .tab-nav a[href="#nrpc-tab2"],
+    #nrpc-tab3:target ~ .tab-nav a[href="#nrpc-tab3"],
+    #nrpc-tab4:target ~ .tab-nav a[href="#nrpc-tab4"],
+    #nrpc-tab5:target ~ .tab-nav a[href="#nrpc-tab5"],
+    #nrpc-tab6:target ~ .tab-nav a[href="#nrpc-tab6"] {
+      background: #ffffff;
+      color: #222;
+      border-bottom: 1px solid #ffffff;
+      position: relative;
+      top: 1px;
+    }
+
+    /* Keep Use Case tab highlighted when a slide within it is targeted */
+    #uc1-s1:target ~ .tab-nav a[href="#nrpc-tab3"],
+    #uc1-s2:target ~ .tab-nav a[href="#nrpc-tab3"],
+    #uc1-s3:target ~ .tab-nav a[href="#nrpc-tab3"],
+    #uc1-s4:target ~ .tab-nav a[href="#nrpc-tab3"] {
+      background: #ffffff;
+      color: #222;
+      border-bottom: 1px solid #ffffff;
+      position: relative;
+      top: 1px;
+    }
+    #uc2-s1:target ~ .tab-nav a[href="#nrpc-tab4"],
+    #uc2-s2:target ~ .tab-nav a[href="#nrpc-tab4"],
+    #uc2-s3:target ~ .tab-nav a[href="#nrpc-tab4"],
+    #uc2-s4:target ~ .tab-nav a[href="#nrpc-tab4"],
+    #uc2-s5:target ~ .tab-nav a[href="#nrpc-tab4"] {
+      background: #ffffff;
+      color: #222;
+      border-bottom: 1px solid #ffffff;
+      position: relative;
+      top: 1px;
+    }
+    #uc3-s1:target ~ .tab-nav a[href="#nrpc-tab5"],
+    #uc3-s2:target ~ .tab-nav a[href="#nrpc-tab5"],
+    #uc3-s3:target ~ .tab-nav a[href="#nrpc-tab5"],
+    #uc3-s4:target ~ .tab-nav a[href="#nrpc-tab5"],
+    #uc3-s5:target ~ .tab-nav a[href="#nrpc-tab5"] {
+      background: #ffffff;
+      color: #222;
+      border-bottom: 1px solid #ffffff;
+      position: relative;
+      top: 1px;
+    }
+
+    /* Panel visibility — default hidden */
+    .panel-2, .panel-3, .panel-4, .panel-5, .panel-6 { display: none; }
+
+    /* Show non-carousel panels */
+    #nrpc-tab2:target ~ .tab-nav ~ .tab-content .panel-2 { display: block; }
+    #nrpc-tab2:target ~ .tab-nav ~ .tab-content .panel-1 { display: none; }
+    #nrpc-tab6:target ~ .tab-nav ~ .tab-content .panel-6 { display: block; }
+    #nrpc-tab6:target ~ .tab-nav ~ .tab-content .panel-1 { display: none; }
+
+    /* Show carousel panels as flex columns */
+    #nrpc-tab3:target ~ .tab-nav ~ .tab-content .panel-3 { display: flex; flex-direction: column; }
+    #nrpc-tab3:target ~ .tab-nav ~ .tab-content .panel-1 { display: none; }
+    #nrpc-tab4:target ~ .tab-nav ~ .tab-content .panel-4 { display: flex; flex-direction: column; }
+    #nrpc-tab4:target ~ .tab-nav ~ .tab-content .panel-1 { display: none; }
+    #nrpc-tab5:target ~ .tab-nav ~ .tab-content .panel-5 { display: flex; flex-direction: column; }
+    #nrpc-tab5:target ~ .tab-nav ~ .tab-content .panel-1 { display: none; }
+
+    /* Show carousel panels when a slide within them is targeted */
+    #uc1-s1:target ~ .tab-nav ~ .tab-content .panel-3,
+    #uc1-s2:target ~ .tab-nav ~ .tab-content .panel-3,
+    #uc1-s3:target ~ .tab-nav ~ .tab-content .panel-3,
+    #uc1-s4:target ~ .tab-nav ~ .tab-content .panel-3 { display: flex; flex-direction: column; }
+    #uc1-s1:target ~ .tab-nav ~ .tab-content .panel-1,
+    #uc1-s2:target ~ .tab-nav ~ .tab-content .panel-1,
+    #uc1-s3:target ~ .tab-nav ~ .tab-content .panel-1,
+    #uc1-s4:target ~ .tab-nav ~ .tab-content .panel-1 { display: none; }
+
+    #uc2-s1:target ~ .tab-nav ~ .tab-content .panel-4,
+    #uc2-s2:target ~ .tab-nav ~ .tab-content .panel-4,
+    #uc2-s3:target ~ .tab-nav ~ .tab-content .panel-4,
+    #uc2-s4:target ~ .tab-nav ~ .tab-content .panel-4,
+    #uc2-s5:target ~ .tab-nav ~ .tab-content .panel-4 { display: flex; flex-direction: column; }
+    #uc2-s1:target ~ .tab-nav ~ .tab-content .panel-1,
+    #uc2-s2:target ~ .tab-nav ~ .tab-content .panel-1,
+    #uc2-s3:target ~ .tab-nav ~ .tab-content .panel-1,
+    #uc2-s4:target ~ .tab-nav ~ .tab-content .panel-1,
+    #uc2-s5:target ~ .tab-nav ~ .tab-content .panel-1 { display: none; }
+
+    #uc3-s1:target ~ .tab-nav ~ .tab-content .panel-5,
+    #uc3-s2:target ~ .tab-nav ~ .tab-content .panel-5,
+    #uc3-s3:target ~ .tab-nav ~ .tab-content .panel-5,
+    #uc3-s4:target ~ .tab-nav ~ .tab-content .panel-5,
+    #uc3-s5:target ~ .tab-nav ~ .tab-content .panel-5 { display: flex; flex-direction: column; }
+    #uc3-s1:target ~ .tab-nav ~ .tab-content .panel-1,
+    #uc3-s2:target ~ .tab-nav ~ .tab-content .panel-1,
+    #uc3-s3:target ~ .tab-nav ~ .tab-content .panel-1,
+    #uc3-s4:target ~ .tab-nav ~ .tab-content .panel-1,
+    #uc3-s5:target ~ .tab-nav ~ .tab-content .panel-1 { display: none; }
+
+    /* Scrollable slide body — fills available space above the nav */
+    .slide-body {
+      flex: 1;
+      min-height: 0;
+      overflow-y: auto;
+    }
+
+    /* ── Carousel slides ──────────────────────────────── */
+    .nrpc-slide { display: none; }
+
+    /* Default: show first slide when tab is directly clicked */
+    #nrpc-tab3:target ~ .tab-nav ~ .tab-content .uc1-s1 { display: block; }
+    #nrpc-tab4:target ~ .tab-nav ~ .tab-content .uc2-s1 { display: block; }
+    #nrpc-tab5:target ~ .tab-nav ~ .tab-content .uc3-s1 { display: block; }
+
+    /* Show slide when its anchor is targeted */
+    #uc1-s1:target ~ .tab-nav ~ .tab-content .uc1-s1 { display: block; }
+    #uc1-s2:target ~ .tab-nav ~ .tab-content .uc1-s2 { display: block; }
+    #uc1-s3:target ~ .tab-nav ~ .tab-content .uc1-s3 { display: block; }
+    #uc1-s4:target ~ .tab-nav ~ .tab-content .uc1-s4 { display: block; }
+    #uc2-s1:target ~ .tab-nav ~ .tab-content .uc2-s1 { display: block; }
+    #uc2-s2:target ~ .tab-nav ~ .tab-content .uc2-s2 { display: block; }
+    #uc2-s3:target ~ .tab-nav ~ .tab-content .uc2-s3 { display: block; }
+    #uc2-s4:target ~ .tab-nav ~ .tab-content .uc2-s4 { display: block; }
+    #uc2-s5:target ~ .tab-nav ~ .tab-content .uc2-s5 { display: block; }
+    #uc3-s1:target ~ .tab-nav ~ .tab-content .uc3-s1 { display: block; }
+    #uc3-s2:target ~ .tab-nav ~ .tab-content .uc3-s2 { display: block; }
+    #uc3-s3:target ~ .tab-nav ~ .tab-content .uc3-s3 { display: block; }
+    #uc3-s4:target ~ .tab-nav ~ .tab-content .uc3-s4 { display: block; }
+    #uc3-s5:target ~ .tab-nav ~ .tab-content .uc3-s5 { display: block; }
+
+    /* ── Carousel navigation bar ──────────────────────── */
+    .nrpc-nav {
+      flex-shrink: 0;
+      padding-top: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 7px;
+    }
+    /* Fixed-width zones keep layout stable when arrows appear/disappear */
+    .nrpc-arrow-zone {
+      width: 22px;
+      height: 22px;
+      flex-shrink: 0;
+      position: relative;
+    }
+    .nrpc-arrow {
+      display: none;
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 22px;
+      height: 22px;
+      line-height: 22px;
+      text-align: center;
+      background: #f0f0f0;
+      border: 1px solid #ccc;
+      border-radius: 4px;
+      text-decoration: none;
+      color: #555;
+      font-size: 1.1em;
+    }
+    .nrpc-arrow:hover { background: #e2e2e2; color: #222; }
+    .nrpc-dots {
+      display: flex;
+      gap: 7px;
+      align-items: center;
+    }
+    .nrpc-dot {
+      display: inline-block;
+      width: 11px;
+      height: 11px;
+      background: #ccc;
+      border-radius: 50%;
+      text-decoration: none;
+      line-height: 0;
+      font-size: 0;
+    }
+    .nrpc-dot:hover { background: #999; }
+    .nrpc-step-count { font-size: 0.82em; color: #888; }
+
+    /* ── Active dot ───────────────────────────────────── */
+    #nrpc-tab3:target ~ .tab-nav ~ .tab-content a[href="#uc1-s1"].nrpc-dot { background: #444; }
+    #nrpc-tab4:target ~ .tab-nav ~ .tab-content a[href="#uc2-s1"].nrpc-dot { background: #444; }
+    #nrpc-tab5:target ~ .tab-nav ~ .tab-content a[href="#uc3-s1"].nrpc-dot { background: #444; }
+
+    #uc1-s1:target ~ .tab-nav ~ .tab-content a[href="#uc1-s1"].nrpc-dot { background: #444; }
+    #uc1-s2:target ~ .tab-nav ~ .tab-content a[href="#uc1-s2"].nrpc-dot { background: #444; }
+    #uc1-s3:target ~ .tab-nav ~ .tab-content a[href="#uc1-s3"].nrpc-dot { background: #444; }
+    #uc1-s4:target ~ .tab-nav ~ .tab-content a[href="#uc1-s4"].nrpc-dot { background: #444; }
+    #uc2-s1:target ~ .tab-nav ~ .tab-content a[href="#uc2-s1"].nrpc-dot { background: #444; }
+    #uc2-s2:target ~ .tab-nav ~ .tab-content a[href="#uc2-s2"].nrpc-dot { background: #444; }
+    #uc2-s3:target ~ .tab-nav ~ .tab-content a[href="#uc2-s3"].nrpc-dot { background: #444; }
+    #uc2-s4:target ~ .tab-nav ~ .tab-content a[href="#uc2-s4"].nrpc-dot { background: #444; }
+    #uc2-s5:target ~ .tab-nav ~ .tab-content a[href="#uc2-s5"].nrpc-dot { background: #444; }
+    #uc3-s1:target ~ .tab-nav ~ .tab-content a[href="#uc3-s1"].nrpc-dot { background: #444; }
+    #uc3-s2:target ~ .tab-nav ~ .tab-content a[href="#uc3-s2"].nrpc-dot { background: #444; }
+    #uc3-s3:target ~ .tab-nav ~ .tab-content a[href="#uc3-s3"].nrpc-dot { background: #444; }
+    #uc3-s4:target ~ .tab-nav ~ .tab-content a[href="#uc3-s4"].nrpc-dot { background: #444; }
+    #uc3-s5:target ~ .tab-nav ~ .tab-content a[href="#uc3-s5"].nrpc-dot { background: #444; }
+
+    /* ── Step counter ─────────────────────────────────── */
+    #nrpc-tab3:target ~ .tab-nav ~ .tab-content .uc1-count::before,
+    #uc1-s1:target   ~ .tab-nav ~ .tab-content .uc1-count::before { content: "1 / 4"; }
+    #uc1-s2:target   ~ .tab-nav ~ .tab-content .uc1-count::before { content: "2 / 4"; }
+    #uc1-s3:target   ~ .tab-nav ~ .tab-content .uc1-count::before { content: "3 / 4"; }
+    #uc1-s4:target   ~ .tab-nav ~ .tab-content .uc1-count::before { content: "4 / 4"; }
+    #nrpc-tab4:target ~ .tab-nav ~ .tab-content .uc2-count::before,
+    #uc2-s1:target   ~ .tab-nav ~ .tab-content .uc2-count::before { content: "1 / 5"; }
+    #uc2-s2:target   ~ .tab-nav ~ .tab-content .uc2-count::before { content: "2 / 5"; }
+    #uc2-s3:target   ~ .tab-nav ~ .tab-content .uc2-count::before { content: "3 / 5"; }
+    #uc2-s4:target   ~ .tab-nav ~ .tab-content .uc2-count::before { content: "4 / 5"; }
+    #uc2-s5:target   ~ .tab-nav ~ .tab-content .uc2-count::before { content: "5 / 5"; }
+    #nrpc-tab5:target ~ .tab-nav ~ .tab-content .uc3-count::before,
+    #uc3-s1:target   ~ .tab-nav ~ .tab-content .uc3-count::before { content: "1 / 5"; }
+    #uc3-s2:target   ~ .tab-nav ~ .tab-content .uc3-count::before { content: "2 / 5"; }
+    #uc3-s3:target   ~ .tab-nav ~ .tab-content .uc3-count::before { content: "3 / 5"; }
+    #uc3-s4:target   ~ .tab-nav ~ .tab-content .uc3-count::before { content: "4 / 5"; }
+    #uc3-s5:target   ~ .tab-nav ~ .tab-content .uc3-count::before { content: "5 / 5"; }
+
+    /* ── Arrow visibility ─────────────────────────────── */
+    /* UC1 prev (shown for slides 2–4) */
+    #uc1-s2:target ~ .tab-nav ~ .tab-content .uc1-prev-2 { display: block; }
+    #uc1-s3:target ~ .tab-nav ~ .tab-content .uc1-prev-3 { display: block; }
+    #uc1-s4:target ~ .tab-nav ~ .tab-content .uc1-prev-4 { display: block; }
+    /* UC1 next (shown for slides 1–3) */
+    #nrpc-tab3:target ~ .tab-nav ~ .tab-content .uc1-next-1,
+    #uc1-s1:target   ~ .tab-nav ~ .tab-content .uc1-next-1 { display: block; }
+    #uc1-s2:target   ~ .tab-nav ~ .tab-content .uc1-next-2 { display: block; }
+    #uc1-s3:target   ~ .tab-nav ~ .tab-content .uc1-next-3 { display: block; }
+
+    /* UC2 prev (shown for slides 2–5) */
+    #uc2-s2:target ~ .tab-nav ~ .tab-content .uc2-prev-2 { display: block; }
+    #uc2-s3:target ~ .tab-nav ~ .tab-content .uc2-prev-3 { display: block; }
+    #uc2-s4:target ~ .tab-nav ~ .tab-content .uc2-prev-4 { display: block; }
+    #uc2-s5:target ~ .tab-nav ~ .tab-content .uc2-prev-5 { display: block; }
+    /* UC2 next (shown for slides 1–4) */
+    #nrpc-tab4:target ~ .tab-nav ~ .tab-content .uc2-next-1,
+    #uc2-s1:target   ~ .tab-nav ~ .tab-content .uc2-next-1 { display: block; }
+    #uc2-s2:target   ~ .tab-nav ~ .tab-content .uc2-next-2 { display: block; }
+    #uc2-s3:target   ~ .tab-nav ~ .tab-content .uc2-next-3 { display: block; }
+    #uc2-s4:target   ~ .tab-nav ~ .tab-content .uc2-next-4 { display: block; }
+
+    /* UC3 prev (shown for slides 2–5) */
+    #uc3-s2:target ~ .tab-nav ~ .tab-content .uc3-prev-2 { display: block; }
+    #uc3-s3:target ~ .tab-nav ~ .tab-content .uc3-prev-3 { display: block; }
+    #uc3-s4:target ~ .tab-nav ~ .tab-content .uc3-prev-4 { display: block; }
+    #uc3-s5:target ~ .tab-nav ~ .tab-content .uc3-prev-5 { display: block; }
+    /* UC3 next (shown for slides 1–4) */
+    #nrpc-tab5:target ~ .tab-nav ~ .tab-content .uc3-next-1,
+    #uc3-s1:target   ~ .tab-nav ~ .tab-content .uc3-next-1 { display: block; }
+    #uc3-s2:target   ~ .tab-nav ~ .tab-content .uc3-next-2 { display: block; }
+    #uc3-s3:target   ~ .tab-nav ~ .tab-content .uc3-next-3 { display: block; }
+    #uc3-s4:target   ~ .tab-nav ~ .tab-content .uc3-next-4 { display: block; }
+  </style>
+
+  <h3><b>NRPC Interactive Map</b></h3>
+
+  <div class="nrpc-tabs">
+
+    <!-- Tab anchors -->
+    <div id="nrpc-tab1" class="tab-anchor"></div>
+    <div id="nrpc-tab2" class="tab-anchor"></div>
+    <div id="nrpc-tab3" class="tab-anchor"></div>
+    <div id="nrpc-tab4" class="tab-anchor"></div>
+    <div id="nrpc-tab5" class="tab-anchor"></div>
+    <div id="nrpc-tab6" class="tab-anchor"></div>
+
+    <!-- Slide anchors — UC1: 4 slides, UC2: 5 slides, UC3: 5 slides -->
+    <div id="uc1-s1" class="tab-anchor"></div>
+    <div id="uc1-s2" class="tab-anchor"></div>
+    <div id="uc1-s3" class="tab-anchor"></div>
+    <div id="uc1-s4" class="tab-anchor"></div>
+    <div id="uc2-s1" class="tab-anchor"></div>
+    <div id="uc2-s2" class="tab-anchor"></div>
+    <div id="uc2-s3" class="tab-anchor"></div>
+    <div id="uc2-s4" class="tab-anchor"></div>
+    <div id="uc2-s5" class="tab-anchor"></div>
+    <div id="uc3-s1" class="tab-anchor"></div>
+    <div id="uc3-s2" class="tab-anchor"></div>
+    <div id="uc3-s3" class="tab-anchor"></div>
+    <div id="uc3-s4" class="tab-anchor"></div>
+    <div id="uc3-s5" class="tab-anchor"></div>
+
+    <div class="tab-nav">
+      <a href="#nrpc-tab1">Directions</a>
+      <a href="#nrpc-tab2">Quick Start</a>
+      <a href="#nrpc-tab3">Use Case #1</a>
+      <a href="#nrpc-tab4">Use Case #2</a>
+      <a href="#nrpc-tab5">Use Case #3</a>
+      <a href="#nrpc-tab6">Documentation</a>
+    </div>
+
+    <div class="tab-content">
+
+      <div class="panel-2">
+        <ol>
+          <li><b>Orient yourself:</b> By default, city and county boundary layers are visible. Use the <b>Zoom to...</b> dropdown to select one or more cities — their boundaries will highlight in blue and the map will zoom to fit them.</li>
+          <li><b>Turn on datasets:</b> Open the <b>Layers</b> panel and toggle on the layers you want to explore. Layers are organized into groups — toggling on a layer inside a group will automatically make that group visible. Use the search bar to quickly find a layer by name.</li>
+          <li><b>Adjust transparency:</b> When a layer is toggled on, an opacity slider appears beneath it in the Layers panel. Drag it left or right to adjust how transparent that layer appears, making it easier to compare overlapping datasets.</li>
+          <li><b>Export data:</b> Once you have cities selected and layers toggled on, click <b>Clip &amp; Zip</b>. Choose SHP or GeoJSON format, optionally enter a file name, and click <b>Export</b>. A ZIP file will download containing all visible (non-Boundaries) datasets intersecting your selected area.</li>
+        </ol>
+      </div>
+
+      <!-- Use Case #1 — carousel (4 slides) -->
+      <div class="panel-3">
+        <div class="slide-body">
+          <div class="nrpc-slide uc1-s1">
+            <p><b>Use Case #1 — Internal Use Only (Single Organization Planning → Action)</b></p>
+            <p><b>Objective:</b> Enable a single jurisdiction (e.g., county, city, watershed district) to translate existing prioritization models into implementation-ready projects.</p>
+            <p><b>Primary Users:</b></p>
+            <ul>
+              <li>Planning staff</li>
+              <li>Natural resources staff</li>
+              <li>GIS analysts</li>
+              <li>Program managers</li>
+            </ul>
+            <p><b>Inputs:</b></p>
+            <ul>
+              <li>Metropolitan Council prioritization layers</li>
+              <li>Hennepin County prioritization layers (e.g., conservation easements)</li>
+              <li>Internal datasets (parcels, infrastructure, known problem areas)</li>
+            </ul>
+          </div>
+          <div class="nrpc-slide uc1-s2">
+            <p><b>Workflow — Steps 1–2</b></p>
+            <p><b>Step 1 — Define Scope:</b></p>
+            <ul>
+              <li>Select jurisdiction boundary (auto-filter layers)</li>
+              <li>Optionally segment by subwatershed, land use type, or program area (e.g., habitat, water quality)</li>
+            </ul>
+            <p><b>Step 2 — Activate Prioritization Layers:</b></p>
+            <ul>
+              <li>Toggle Met Council model outputs and County prioritization layers</li>
+              <li>Adjust opacity / stacking to identify high-value overlaps</li>
+            </ul>
+          </div>
+          <div class="nrpc-slide uc1-s3">
+            <p><b>Workflow — Steps 3–4</b></p>
+            <p><b>Step 3 — Identify Candidate Opportunities:</b></p>
+            <ul>
+              <li>Staff visually scan + query high-priority clusters and gaps in current programming</li>
+              <li>Use filtering tools: parcel ownership, land cover, impairment status</li>
+            </ul>
+            <p><b>Step 4 — Create "Opportunity Points":</b></p>
+            <ul>
+              <li>Add point or polygon to the Opportunities Layer</li>
+              <li>Required attributes: title, description, priority level, program alignment, estimated feasibility, staff owner</li>
+            </ul>
+          </div>
+          <div class="nrpc-slide uc1-s4">
+            <p><b>Workflow — Steps 5–6 &amp; Outputs</b></p>
+            <p><b>Step 5 — Internal Review + Refinement:</b> Weekly or sprint-based review to validate feasibility, remove duplicates, and rank opportunities.</p>
+            <p><b>Step 6 — Plan Development:</b> Export map layers and opportunity dataset to feed into Comprehensive Plans, capital improvement planning, and grant targeting.</p>
+            <br>
+            <p><b>Outputs:</b> Structured opportunity inventory, spatially explicit project list, plan-aligned implementation pipeline.</p>
+          </div>
+        </div>
+        <div class="nrpc-nav">
+          <div class="nrpc-arrow-zone">
+            <a href="#uc1-s1" class="nrpc-arrow uc1-prev-2">&#8249;</a>
+            <a href="#uc1-s2" class="nrpc-arrow uc1-prev-3">&#8249;</a>
+            <a href="#uc1-s3" class="nrpc-arrow uc1-prev-4">&#8249;</a>
+          </div>
+          <div class="nrpc-dots">
+            <a href="#uc1-s1" class="nrpc-dot"></a>
+            <a href="#uc1-s2" class="nrpc-dot"></a>
+            <a href="#uc1-s3" class="nrpc-dot"></a>
+            <a href="#uc1-s4" class="nrpc-dot"></a>
+            <span class="nrpc-step-count uc1-count"></span>
+          </div>
+          <div class="nrpc-arrow-zone">
+            <a href="#uc1-s2" class="nrpc-arrow uc1-next-1">&#8250;</a>
+            <a href="#uc1-s3" class="nrpc-arrow uc1-next-2">&#8250;</a>
+            <a href="#uc1-s4" class="nrpc-arrow uc1-next-3">&#8250;</a>
+          </div>
+        </div>
+      </div>
+
+      <!-- Use Case #2 — carousel (5 slides) -->
+      <div class="panel-4">
+        <div class="slide-body">
+          <div class="nrpc-slide uc2-s1">
+            <p><b>Use Case #2 — Internal + 1–2 Close Partners (Coordinated Planning)</b></p>
+            <p><b>Objective:</b> Coordinate across a small set of aligned entities to identify shared opportunities and reduce fragmentation.</p>
+            <p><b>Primary Users:</b></p>
+            <ul>
+              <li>County + watershed district</li>
+              <li>Adjacent municipalities</li>
+              <li>Implementation partners</li>
+            </ul>
+            <p><b>Additional Inputs:</b></p>
+            <ul>
+              <li>Partner datasets (e.g., watershed plans, capital plans)</li>
+              <li>Shared priorities (e.g., TMDLs, flood mitigation zones)</li>
+            </ul>
+          </div>
+          <div class="nrpc-slide uc2-s2">
+            <p><b>Workflow — Steps 1–2</b></p>
+            <p><b>Step 1 — Joint Scope Definition:</b></p>
+            <ul>
+              <li>Select combined multi-jurisdiction geography</li>
+              <li>Define shared goals (e.g., phosphorus reduction, habitat corridors)</li>
+            </ul>
+            <p><b>Step 2 — Shared Layer Environment:</b></p>
+            <ul>
+              <li>Enable all Level 1 layers, partner-specific layers, and a "jurisdiction ownership" overlay</li>
+            </ul>
+          </div>
+          <div class="nrpc-slide uc2-s3">
+            <p><b>Workflow — Steps 3–4</b></p>
+            <p><b>Step 3 — Joint Opportunity Identification:</b></p>
+            <ul>
+              <li>Partners independently add Opportunity Points</li>
+              <li>Tag each with organization and collaboration potential (low / medium / high)</li>
+            </ul>
+            <p><b>Step 4 — Structured Coordination:</b></p>
+            <ul>
+              <li>Use facilitated sessions to review overlaps</li>
+              <li>Identify redundant efforts and synergies</li>
+              <li>Merge or split opportunities as needed</li>
+            </ul>
+          </div>
+          <div class="nrpc-slide uc2-s4">
+            <p><b>Workflow — Steps 5–6</b></p>
+            <p><b>Step 5 — Assign Roles:</b></p>
+            <ul>
+              <li>For each opportunity, define lead organization, supporting partners, and coordination needs</li>
+            </ul>
+            <p><b>Step 6 — Prioritize Cross-Boundary Projects:</b></p>
+            <ul>
+              <li>Rank based on multi-benefit impact, funding leverage, and implementation feasibility</li>
+            </ul>
+          </div>
+          <div class="nrpc-slide uc2-s5">
+            <p><b>Workflow — Step 7 &amp; Outputs</b></p>
+            <p><b>Step 7 — Export + Alignment:</b> Outputs feed into multiple plans simultaneously, joint funding proposals, and interagency agreements.</p>
+            <br>
+            <p><b>Outputs:</b> Coordinated opportunity map, reduced duplication, defined ownership + collaboration structure.</p>
+          </div>
+        </div>
+        <div class="nrpc-nav">
+          <div class="nrpc-arrow-zone">
+            <a href="#uc2-s1" class="nrpc-arrow uc2-prev-2">&#8249;</a>
+            <a href="#uc2-s2" class="nrpc-arrow uc2-prev-3">&#8249;</a>
+            <a href="#uc2-s3" class="nrpc-arrow uc2-prev-4">&#8249;</a>
+            <a href="#uc2-s4" class="nrpc-arrow uc2-prev-5">&#8249;</a>
+          </div>
+          <div class="nrpc-dots">
+            <a href="#uc2-s1" class="nrpc-dot"></a>
+            <a href="#uc2-s2" class="nrpc-dot"></a>
+            <a href="#uc2-s3" class="nrpc-dot"></a>
+            <a href="#uc2-s4" class="nrpc-dot"></a>
+            <a href="#uc2-s5" class="nrpc-dot"></a>
+            <span class="nrpc-step-count uc2-count"></span>
+          </div>
+          <div class="nrpc-arrow-zone">
+            <a href="#uc2-s2" class="nrpc-arrow uc2-next-1">&#8250;</a>
+            <a href="#uc2-s3" class="nrpc-arrow uc2-next-2">&#8250;</a>
+            <a href="#uc2-s4" class="nrpc-arrow uc2-next-3">&#8250;</a>
+            <a href="#uc2-s5" class="nrpc-arrow uc2-next-4">&#8250;</a>
+          </div>
+        </div>
+      </div>
+
+      <!-- Use Case #3 — carousel (5 slides) -->
+      <div class="panel-5">
+        <div class="slide-body">
+          <div class="nrpc-slide uc3-s1">
+            <p><b>Use Case #3 — Full Participatory Mapping (Planning + Public Engagement + Co-Production)</b></p>
+            <p><b>Objective:</b> Integrate community, stakeholders, and practitioners into the identification of opportunities—while maintaining technical rigor.</p>
+            <p><b>Primary Users:</b></p>
+            <ul>
+              <li>All Level 2 users</li>
+              <li>Community members</li>
+              <li>NGOs</li>
+              <li>Landowners</li>
+              <li>Contractors</li>
+            </ul>
+            <p><b>Additional Inputs:</b></p>
+            <ul>
+              <li>Workshop outputs</li>
+              <li>Community feedback</li>
+              <li>Field observations</li>
+              <li>Local knowledge</li>
+            </ul>
+          </div>
+          <div class="nrpc-slide uc3-s2">
+            <p><b>Workflow — Steps 1–2</b></p>
+            <p><b>Step 1 — Prepare Public-Facing Map:</b></p>
+            <ul>
+              <li>Simplify layer stack to a curated subset of technical layers</li>
+              <li>Enable pop-ups with plain-language explanations and guided navigation</li>
+            </ul>
+            <p><b>Step 2 — Conduct Workshops:</b></p>
+            <ul>
+              <li>In-person or virtual sessions walking through priority areas and existing constraints</li>
+              <li>Participants identify opportunities and flag concerns</li>
+            </ul>
+          </div>
+          <div class="nrpc-slide uc3-s3">
+            <p><b>Workflow — Steps 3–4</b></p>
+            <p><b>Step 3 — Capture Participatory Input:</b></p>
+            <ul>
+              <li>Add features via facilitator-led or direct user input</li>
+              <li>Required attributes: opportunity type, local context, contact (optional)</li>
+            </ul>
+            <p><b>Step 4 — Validate + Filter:</b></p>
+            <ul>
+              <li>Internal review to remove infeasible suggestions and flag high-value local insights</li>
+            </ul>
+          </div>
+          <div class="nrpc-slide uc3-s4">
+            <p><b>Workflow — Steps 5–6</b></p>
+            <p><b>Step 5 — Integrate with Technical Layers:</b></p>
+            <ul>
+              <li>Overlay participatory inputs with prioritization models</li>
+              <li>Identify high alignment (priority + community support) and conflicts</li>
+            </ul>
+            <p><b>Step 6 — Final Opportunity Set:</b></p>
+            <ul>
+              <li>Combine technical opportunities and participatory inputs</li>
+              <li>Tag each as community-supported or high-priority technical</li>
+            </ul>
+          </div>
+          <div class="nrpc-slide uc3-s5">
+            <p><b>Workflow — Step 7 &amp; Outputs</b></p>
+            <p><b>Step 7 — Feedback Loop:</b> Share results back via public dashboards and reports to maintain transparency.</p>
+            <br>
+            <p><b>Outputs:</b> Socially validated project list, increased legitimacy and buy-in, improved implementation success.</p>
+          </div>
+        </div>
+        <div class="nrpc-nav">
+          <div class="nrpc-arrow-zone">
+            <a href="#uc3-s1" class="nrpc-arrow uc3-prev-2">&#8249;</a>
+            <a href="#uc3-s2" class="nrpc-arrow uc3-prev-3">&#8249;</a>
+            <a href="#uc3-s3" class="nrpc-arrow uc3-prev-4">&#8249;</a>
+            <a href="#uc3-s4" class="nrpc-arrow uc3-prev-5">&#8249;</a>
+          </div>
+          <div class="nrpc-dots">
+            <a href="#uc3-s1" class="nrpc-dot"></a>
+            <a href="#uc3-s2" class="nrpc-dot"></a>
+            <a href="#uc3-s3" class="nrpc-dot"></a>
+            <a href="#uc3-s4" class="nrpc-dot"></a>
+            <a href="#uc3-s5" class="nrpc-dot"></a>
+            <span class="nrpc-step-count uc3-count"></span>
+          </div>
+          <div class="nrpc-arrow-zone">
+            <a href="#uc3-s2" class="nrpc-arrow uc3-next-1">&#8250;</a>
+            <a href="#uc3-s3" class="nrpc-arrow uc3-next-2">&#8250;</a>
+            <a href="#uc3-s4" class="nrpc-arrow uc3-next-3">&#8250;</a>
+            <a href="#uc3-s5" class="nrpc-arrow uc3-next-4">&#8250;</a>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel-6">
+        <p>Documentation content coming soon.</p>
+      </div>
+
+      <div class="panel-1">
+        <p><b>Navigate</b></p>
+        <ul>
+          <li>Click and drag to pan around the map.</li>
+          <li>Use the <b>+ / -</b> buttons (top right) to zoom in and out, or scroll with your mouse wheel.</li>
+          <li>Click the <b>Home</b> icon to return to the default map view.</li>
+        </ul>
+        <p><b>Legend &amp; Layers</b></p>
+        <ul>
+          <li>Click <b>Legend</b> or <b>Layers</b> to toggle those panels open or closed.</li>
+          <li>In the <b>Layers</b> panel, check or uncheck layers to show or hide them on the map. Use the search bar to find a layer by name.</li>
+          <li>When a layer is toggled on, an <b>opacity slider</b> appears beneath it — drag it to adjust that layer's transparency.</li>
+        </ul>
+        <p><b>Zoom to...</b></p>
+        <ul>
+          <li>Click <b>Zoom to...</b> to open a searchable list of cities. Check one or more cities to highlight their boundaries on the map in blue.</li>
+          <li>Click <b>Zoom</b> to fit the map to your selected cities, or <b>Clear</b> to deselect all.</li>
+        </ul>
+        <p>Export data with <b>Clip &amp; Zip</b></p>
+        <ul>
+          <li>After selecting cities in <b>Zoom to...</b>, click <b>Clip &amp; Zip</b> to export data.</li>
+          <li>Choose <b>SHP</b> or <b>GeoJSON</b> format, optionally enter a file name, then click <b>Export</b>.</li>
+          <li>All visible non-Boundaries layers intersecting your selected cities will be packaged into a downloadable ZIP file.</li>
+        </ul>
+      </div>
+
+    </div>
+  </div>

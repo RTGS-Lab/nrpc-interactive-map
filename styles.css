@@ -43,22 +43,132 @@ body,
   background: #d0d0d0;
 }
 
-#city-select {
-  height: 32px;
-  padding: 0 8px;
-  border: 1px solid #ccc;
-  border-radius: 3px;
-  background: white;
-  color: #323232;
-  font-size: 14px;
-  font-family: inherit;
-  cursor: pointer;
-  max-width: 180px;
+#city-dropdown-wrapper {
+  position: relative;
 }
 
-#city-select:focus {
+#city-dropdown-list {
+  position: fixed;
+  background: white;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+  max-height: 220px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  z-index: 200;
+  min-width: 180px;
+  padding: 4px 0 0;
+}
+
+#city-dropdown-list.hidden {
+  display: none;
+}
+
+#city-search-wrapper {
+  position: relative;
+  border-bottom: 1px solid #e0e0e0;
+  flex-shrink: 0;
+}
+
+#city-search {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 6px 28px 6px 8px;
+  border: none;
+  font-size: 13px;
+  font-family: inherit;
+  outline: none;
+}
+
+#city-search:focus {
   outline: 2px solid #0079c1;
   outline-offset: -2px;
+}
+
+#city-search-clear {
+  position: absolute;
+  right: 6px;
+  top: 50%;
+  transform: translateY(-50%);
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 16px;
+  color: #999;
+  line-height: 1;
+  padding: 0;
+}
+
+#city-search-clear:hover {
+  color: #323232;
+}
+
+#city-checkbox-scroll {
+  overflow-y: auto;
+  flex: 1;
+  min-height: 0;
+}
+
+.city-checkbox-item {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 5px 10px;
+  cursor: pointer;
+  font-size: 13px;
+  font-family: inherit;
+}
+
+.city-checkbox-item:hover {
+  background: #f3f3f3;
+}
+
+.city-checkbox-item label {
+  cursor: pointer;
+}
+
+#city-action-row {
+  display: flex;
+  gap: 6px;
+  padding: 6px 10px;
+  flex-shrink: 0;
+}
+
+#city-zoom-btn,
+#city-clear-btn {
+  flex: 1;
+  padding: 5px 0;
+  border: none;
+  border-radius: 3px;
+  font-size: 13px;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+#city-zoom-btn {
+  background: #0079c1;
+  color: white;
+}
+
+#city-zoom-btn:hover:not(:disabled) {
+  background: #005e95;
+}
+
+#city-zoom-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+#city-clear-btn {
+  background: #f0f0f0;
+  color: #323232;
+  border: 1px solid #ccc;
+}
+
+#city-clear-btn:hover {
+  background: #e0e0e0;
 }
 
 #home-container .esri-widget--button {
@@ -144,5 +254,130 @@ body,
 
 #layer-search-clear:hover {
   color: #323232;
+}
+
+/* ── Opacity inline sliders (inside LayerList panels) ────────────────────── */
+
+.opacity-inline-wrap {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 4px 4px 0;
+  font-family: inherit;
+}
+
+.opacity-inline-label {
+  font-size: 11px;
+  color: #666;
+  flex-shrink: 0;
+}
+
+.opacity-inline-slider {
+  flex: 1;
+  min-width: 0;
+  accent-color: #0079c1;
+  cursor: pointer;
+}
+
+.opacity-inline-value {
+  font-size: 11px;
+  color: #666;
+  width: 32px;
+  text-align: right;
+  flex-shrink: 0;
+  font-family: inherit;
+}
+
+/* ── Clip & Zip ──────────────────────────────────────────────────────────── */
+
+#clip-zip-wrapper {
+  position: relative;
+}
+
+#clip-zip-dropdown {
+  position: fixed;
+  background: white;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+  z-index: 200;
+  min-width: 210px;
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+#clip-zip-dropdown.hidden {
+  display: none;
+}
+
+#clip-format-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-family: inherit;
+}
+
+.clip-format-label {
+  color: #323232;
+  font-weight: 600;
+}
+
+#clip-format-row label {
+  cursor: pointer;
+}
+
+#clip-filename-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-family: inherit;
+}
+
+#clip-filename-input {
+  flex: 1;
+  min-width: 0;
+  padding: 4px 6px;
+  border: 1px solid #ccc;
+  border-radius: 3px;
+  font-size: 13px;
+  font-family: inherit;
+  color: #323232;
+}
+
+#clip-filename-input:focus {
+  outline: 2px solid #0079c1;
+  outline-offset: -2px;
+}
+
+#clip-status {
+  font-size: 12px;
+  color: #666;
+  font-family: inherit;
+  line-height: 1.4;
+}
+
+#clip-export-btn {
+  width: 100%;
+  padding: 6px 0;
+  background: #0079c1;
+  color: white;
+  border: none;
+  border-radius: 3px;
+  font-size: 13px;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+#clip-export-btn:hover:not(:disabled) {
+  background: #005e95;
+}
+
+#clip-export-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
 }
 
