@@ -404,6 +404,26 @@ body,
   font-style: italic;
 }
 
+#clip-status-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+#clip-spinner {
+  width: 13px;
+  height: 13px;
+  border: 2px solid #ddd;
+  border-top-color: #0079c1;
+  border-radius: 50%;
+  flex-shrink: 0;
+  animation: clip-spin 0.75s linear infinite;
+}
+
+@keyframes clip-spin {
+  to { transform: rotate(360deg); }
+}
+
 #clip-status {
   font-size: 12px;
   color: #666;
