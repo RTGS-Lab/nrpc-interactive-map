@@ -4,11 +4,10 @@ require([
   "esri/widgets/Home",
   "esri/widgets/LayerList",
   "esri/widgets/Legend",
-  "esri/widgets/Fullscreen",
   "esri/layers/GraphicsLayer",
   "esri/Graphic",
   "esri/Basemap",
-], (WebMap, MapView, Home, LayerList, Legend, Fullscreen, GraphicsLayer, Graphic, Basemap) => {
+], (WebMap, MapView, Home, LayerList, Legend, GraphicsLayer, Graphic, Basemap) => {
 
   const webmap = new WebMap({
     portalItem: {
@@ -68,7 +67,13 @@ require([
 
   view.when(() => {
     view.ui.move("zoom", "top-right");
-    view.ui.add(new Fullscreen({ view }), { position: "top-right", index: 0 });
+
+    const openTabBtn = document.createElement("div");
+    openTabBtn.className = "esri-widget esri-widget--button esri-interactive";
+    openTabBtn.title = "Open in new tab";
+    openTabBtn.innerHTML = `<span class="esri-icon esri-icon-launch-link-external"></span>`;
+    openTabBtn.addEventListener("click", () => window.open(window.location.href, "_blank"));
+    view.ui.add(openTabBtn, { position: "top-right", index: 0 });
 
     const home = new Home({ view });
 
