@@ -4,10 +4,11 @@ require([
   "esri/widgets/Home",
   "esri/widgets/LayerList",
   "esri/widgets/Legend",
+  "esri/widgets/Editor",
   "esri/layers/GraphicsLayer",
   "esri/Graphic",
   "esri/Basemap",
-], (WebMap, MapView, Home, LayerList, Legend, GraphicsLayer, Graphic, Basemap) => {
+], (WebMap, MapView, Home, LayerList, Legend, Editor, GraphicsLayer, Graphic, Basemap) => {
 
   const webmap = new WebMap({
     portalItem: {
@@ -98,6 +99,12 @@ require([
     layersToggle.textContent = "Layers";
     toggleBar.appendChild(layersToggle);
 
+    const contributeToggle = document.createElement("button");
+    contributeToggle.id = "contribute-toggle";
+    contributeToggle.className = "panel-toggle";
+    contributeToggle.textContent = "Contribute";
+    toggleBar.appendChild(contributeToggle);
+
     const basemapWrapper = document.createElement("div");
     basemapWrapper.id = "basemap-wrapper";
 
@@ -136,7 +143,7 @@ require([
     const citySearch = document.createElement("input");
     citySearch.id = "city-search";
     citySearch.type = "text";
-    citySearch.placeholder = "Search cities...";
+    citySearch.placeholder = "Search...";
     citySearchWrapper.appendChild(citySearch);
 
     const citySearchClear = document.createElement("button");
@@ -333,6 +340,11 @@ require([
     const layerListContainer = document.createElement("div");
     layerListContainer.id = "layer-list-container";
     layerListWrapper.appendChild(layerListContainer);
+    // Tracks when group visibility is being set by parent propagation vs. direct user click
+    let propagatingDepth = 0;
+    // Set true during Contribute activation to suppress "turn on all children" for ancestor groups
+    let skipChildCascade = false;
+
     new LayerList({
       view,
       container: layerListContainer,
@@ -378,12 +390,18 @@ require([
           layer.watch("visible", visible => {
             if (visible) {
               item.open = true;
-              layer.layers.forEach(child => { child.visible = true; });
+              if (propagatingDepth === 0 && !skipChildCascade) {
+                layer.layers.forEach(child => { child.visible = true; });
+              }
+              propagatingDepth++;
               let p = layer.parent;
               while (p && p.type === "group") {
                 p.visible = true;
                 p = p.parent;
               }
+              propagatingDepth--;
+            } else {
+              item.open = false;
             }
           });
           return;
@@ -972,6 +990,23 @@ require([
       }
     });
 
+    // Contribute panel
+    const contributeWrapper = document.createElement("div");
+    contributeWrapper.id = "contribute-wrapper";
+    contributeWrapper.classList.add("panel", "hidden");
+    view.ui.add(contributeWrapper, { position: "top-right", index: 0 });
+
+    const contributeTitle = document.createElement("div");
+    contributeTitle.className = "panel-title";
+    contributeTitle.textContent = "Contribute";
+    contributeWrapper.appendChild(contributeTitle);
+
+    const contributeContainer = document.createElement("div");
+    contributeContainer.id = "contribute-container";
+    contributeWrapper.appendChild(contributeContainer);
+
+    new Editor({ view, container: contributeContainer });
+
     // ── Toggle handlers ───────────────────────────────────────────────────────
     legendToggle.addEventListener("click", () => {
       legendWrapper.classList.toggle("hidden");
@@ -980,6 +1015,35 @@ require([
     layersToggle.addEventListener("click", () => {
       layerListWrapper.classList.toggle("hidden");
       layersToggle.classList.toggle("active");
+    });
+    const opportunityGroup = view.map.allLayers.find(l =>
+      l.type === "group" && l.title === "NRPC Opportunity Layers"
+    );
+
+    contributeToggle.addEventListener("click", () => {
+      const opening = contributeWrapper.classList.toggle("hidden") === false;
+      contributeToggle.classList.toggle("active");
+      if (opening && opportunityGroup && !opportunityGroup.visible) {
+        // Suppress the "turn on all children" cascade while we make ancestor groups visible.
+        // Without this, making "NRPC Data" (the parent) visible would also turn on every
+        // sibling group alongside "NRPC Opportunity Layers".
+        skipChildCascade = true;
+
+        // Make ancestor group(s) visible first — their watchers fire but cascade is suppressed.
+        let p = opportunityGroup.parent;
+        while (p && p.type === "group") {
+          if (!p.visible) p.visible = true;
+          p = p.parent;
+        }
+
+        // Now make the opportunity group itself visible.
+        // Its watcher also has cascade suppressed, so manually turn on its children.
+        opportunityGroup.visible = true;
+        opportunityGroup.layers.forEach(child => { child.visible = true; });
+
+        // Reset after all async watchers have fired.
+        Promise.resolve().then(() => { skipChildCascade = false; });
+      }
     });
 
     // Auto-show legend the first time any non-Boundaries group layer becomes visible

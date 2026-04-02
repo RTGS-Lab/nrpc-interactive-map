@@ -186,6 +186,7 @@ body,
   z-index: 99;
 }
 
+
 .panel {
   height: 300px;
   width: 300px;
@@ -198,6 +199,10 @@ body,
   box-shadow: 0 2px 10px rgba(0, 0, 0, 0.2);
 }
 
+#contribute-wrapper {
+  height: 500px;
+}
+
 
 .panel-title {
   padding: 6px 8px;
@@ -208,7 +213,8 @@ body,
 }
 
 #layer-list-container,
-#legend-container {
+#legend-container,
+#contribute-container {
   overflow-y: auto;
   flex: 1;
   min-height: 0;
