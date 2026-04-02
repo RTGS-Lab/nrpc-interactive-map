@@ -288,6 +288,49 @@ body,
   font-family: inherit;
 }
 
+/* ── Basemap dropdown ────────────────────────────────────────────────────── */
+
+#basemap-wrapper {
+  position: relative;
+}
+
+#basemap-dropdown {
+  position: fixed;
+  background: white;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+  z-index: 200;
+  min-width: 185px;
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+#basemap-dropdown.hidden {
+  display: none;
+}
+
+.basemap-option {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 13px;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.basemap-option label {
+  cursor: pointer;
+}
+
+#basemap-opacity-row {
+  border-top: 1px solid #e0e0e0;
+  padding-top: 6px;
+  margin-top: 2px;
+}
+
 /* ── Clip & Zip ──────────────────────────────────────────────────────────── */
 
 #clip-zip-wrapper {
@@ -353,11 +396,28 @@ body,
   outline-offset: -2px;
 }
 
+#clip-warning {
+  font-size: 12px;
+  color: #888;
+  font-family: inherit;
+  line-height: 1.5;
+  font-style: italic;
+}
+
 #clip-status {
   font-size: 12px;
   color: #666;
   font-family: inherit;
   line-height: 1.4;
+}
+
+.city-checkbox-county {
+  font-weight: 600;
+}
+
+.city-county-separator {
+  border-bottom: 1px solid #e0e0e0;
+  margin: 4px 0;
 }
 
 #clip-export-btn {

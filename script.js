@@ -4,9 +4,11 @@ require([
   "esri/widgets/Home",
   "esri/widgets/LayerList",
   "esri/widgets/Legend",
+  "esri/widgets/Fullscreen",
   "esri/layers/GraphicsLayer",
   "esri/Graphic",
-], (WebMap, MapView, Home, LayerList, Legend, GraphicsLayer, Graphic) => {
+  "esri/Basemap",
+], (WebMap, MapView, Home, LayerList, Legend, Fullscreen, GraphicsLayer, Graphic, Basemap) => {
 
   const webmap = new WebMap({
     portalItem: {
@@ -301,6 +303,7 @@ require([
 
   view.when(() => {
     view.ui.move("zoom", "top-right");
+    view.ui.add(new Fullscreen({ view }), { position: "top-right", index: 0 });
 
     const home = new Home({ view });
 
@@ -315,7 +318,7 @@ require([
 
     const legendToggle = document.createElement("button");
     legendToggle.id = "legend-toggle";
-    legendToggle.className = "panel-toggle active";
+    legendToggle.className = "panel-toggle";
     legendToggle.textContent = "Legend";
     toggleBar.appendChild(legendToggle);
 
@@ -324,6 +327,22 @@ require([
     layersToggle.className = "panel-toggle active";
     layersToggle.textContent = "Layers";
     toggleBar.appendChild(layersToggle);
+
+    const basemapWrapper = document.createElement("div");
+    basemapWrapper.id = "basemap-wrapper";
+
+    const basemapBtn = document.createElement("button");
+    basemapBtn.id = "basemap-btn";
+    basemapBtn.className = "panel-toggle";
+    basemapBtn.textContent = "Basemap";
+    basemapWrapper.appendChild(basemapBtn);
+
+    const basemapDropdown = document.createElement("div");
+    basemapDropdown.id = "basemap-dropdown";
+    basemapDropdown.classList.add("hidden");
+    document.body.appendChild(basemapDropdown);
+
+    toggleBar.appendChild(basemapWrapper);
 
     // ── City zoom multi-select dropdown ─────────────────────────────────────
     const cityDropdownWrapper = document.createElement("div");
@@ -401,7 +420,6 @@ require([
     clipZipBtn.id = "clip-zip-btn";
     clipZipBtn.className = "panel-toggle";
     clipZipBtn.textContent = "Clip & Zip";
-    clipZipBtn.disabled = true;
     clipZipWrapper.appendChild(clipZipBtn);
 
     const clipZipDropdown = document.createElement("div");
@@ -409,10 +427,22 @@ require([
     clipZipDropdown.classList.add("hidden");
     document.body.appendChild(clipZipDropdown);
 
+    // Warning shown when conditions not met
+    const clipWarning = document.createElement("div");
+    clipWarning.id = "clip-warning";
+    clipWarning.textContent = "Clip & Zip requires at least one non-Boundaries layer to be visible and a city or county extent selected in Zoom to...";
+    clipZipDropdown.appendChild(clipWarning);
+
+    // Form contents shown when conditions are met
+    const clipFormContents = document.createElement("div");
+    clipFormContents.id = "clip-form-contents";
+    clipFormContents.classList.add("hidden");
+    clipZipDropdown.appendChild(clipFormContents);
+
     // Format selector
     const clipFormatRow = document.createElement("div");
     clipFormatRow.id = "clip-format-row";
-    clipZipDropdown.appendChild(clipFormatRow);
+    clipFormContents.appendChild(clipFormatRow);
 
     const clipFormatLabel = document.createElement("span");
     clipFormatLabel.className = "clip-format-label";
@@ -438,7 +468,7 @@ require([
     // Filename input
     const clipFilenameRow = document.createElement("div");
     clipFilenameRow.id = "clip-filename-row";
-    clipZipDropdown.appendChild(clipFilenameRow);
+    clipFormContents.appendChild(clipFilenameRow);
 
     const clipFilenameLabel = document.createElement("span");
     clipFilenameLabel.className = "clip-format-label";
@@ -454,15 +484,14 @@ require([
     // Status line
     const clipStatus = document.createElement("div");
     clipStatus.id = "clip-status";
-    clipStatus.textContent = "Select cities above to export.";
-    clipZipDropdown.appendChild(clipStatus);
+    clipFormContents.appendChild(clipStatus);
 
     // Export button
     const clipExportBtn = document.createElement("button");
     clipExportBtn.id = "clip-export-btn";
     clipExportBtn.textContent = "Export";
     clipExportBtn.disabled = true;
-    clipZipDropdown.appendChild(clipExportBtn);
+    clipFormContents.appendChild(clipExportBtn);
 
     toggleBar.appendChild(clipZipWrapper);
 
@@ -473,10 +502,10 @@ require([
     panelsContainer.id = "panels-container";
     document.body.appendChild(panelsContainer);
 
-    // Legend panel (visible by default)
+    // Legend panel (hidden by default)
     const legendWrapper = document.createElement("div");
     legendWrapper.id = "legend-wrapper";
-    legendWrapper.classList.add("panel");
+    legendWrapper.classList.add("panel", "hidden");
     panelsContainer.appendChild(legendWrapper);
 
     const legendTitle = document.createElement("div");
@@ -532,6 +561,55 @@ require([
         const layer = item.layer;
         if (!layer || layer.type === "graphics") return;
 
+        // Group layers: auto-expand when made visible + opacity panel
+        if (layer.type === "group") {
+          const wrap = document.createElement("div");
+          wrap.className = "opacity-inline-wrap";
+
+          const labelEl = document.createElement("span");
+          labelEl.className = "opacity-inline-label";
+          labelEl.textContent = "Opacity";
+
+          const slider = document.createElement("input");
+          slider.type = "range";
+          slider.min = "0";
+          slider.max = "100";
+          slider.value = Math.round((layer.opacity ?? 1) * 100);
+          slider.className = "opacity-inline-slider";
+
+          const valueDisplay = document.createElement("span");
+          valueDisplay.className = "opacity-inline-value";
+          valueDisplay.textContent = `${slider.value}%`;
+
+          slider.addEventListener("input", () => {
+            layer.opacity = slider.value / 100;
+            valueDisplay.textContent = `${slider.value}%`;
+          });
+
+          wrap.appendChild(labelEl);
+          wrap.appendChild(slider);
+          wrap.appendChild(valueDisplay);
+
+          item.panel = {
+            content: wrap,
+            open: false,
+            icon: "sliders-horizontal"
+          };
+
+          layer.watch("visible", visible => {
+            if (visible) {
+              item.open = true;
+              layer.layers.forEach(child => { child.visible = true; });
+              let p = layer.parent;
+              while (p && p.type === "group") {
+                p.visible = true;
+                p = p.parent;
+              }
+            }
+          });
+          return;
+        }
+
         const wrap = document.createElement("div");
         wrap.className = "opacity-inline-wrap";
 
@@ -561,12 +639,11 @@ require([
 
         item.panel = {
           content: wrap,
-          open: layer.visible,
+          open: false,
           icon: "sliders-horizontal"
         };
 
         layer.watch("visible", visible => {
-          item.panel.open = visible;
           if (visible) {
             let p = layer.parent;
             while (p && p.type === "group") {
@@ -635,16 +712,44 @@ require([
     // ── City checkbox dropdown ────────────────────────────────────────────────
     const citiesLayer = view.map.allLayers.find(l => l.title && l.title.toLowerCase().includes("cities"));
 
-    // Track selected city geometry union for Clip & Zip
+    // Find the Hennepin County boundary layer (inside Boundaries group, exact title match)
+    const countyLayer = view.map.allLayers.find(l =>
+      l.title === "Hennepin County" &&
+      l.parent && l.parent.title && l.parent.title.toLowerCase().includes("boundaries")
+    );
+
     let clipGeometry = null;
+    let fullCountySelected = false;
+    let countyGeometryCache = null;
+
+    // Update the Clip & Zip panel state based on whether extent + visible layers are both present
+    function updateClipZipPanel() {
+      const hasExtent = clipGeometry !== null;
+      const hasLayers = getExportableLayers(webmap).length > 0;
+      const ready = hasExtent && hasLayers;
+      clipWarning.classList.toggle("hidden", ready);
+      clipFormContents.classList.toggle("hidden", !ready);
+      clipExportBtn.disabled = !ready;
+      if (ready && !clipStatus.textContent) {
+        clipStatus.textContent = fullCountySelected
+          ? "Ready to export full county."
+          : (() => {
+              const n = cityCheckboxScroll.querySelectorAll("input:checked").length;
+              return `Ready to export ${n} ${n === 1 ? "city" : "cities"}.`;
+            })();
+      }
+    }
 
     function updateClipGeometry() {
+      if (fullCountySelected) {
+        // county geometry already set when Full County was selected
+        updateClipZipPanel();
+        return;
+      }
       const checked = [...cityCheckboxScroll.querySelectorAll("input:checked")];
       if (!checked.length) {
         clipGeometry = null;
-        clipZipBtn.disabled = true;
-        clipExportBtn.disabled = true;
-        clipStatus.textContent = "Select cities above to export.";
+        updateClipZipPanel();
         return;
       }
       const inClause = checked.map(cb => `'${cb.value.replace(/'/g, "''")}'`).join(",");
@@ -653,19 +758,20 @@ require([
       q.returnGeometry = true;
       q.outSpatialReference = { wkid: 4326 };
       citiesLayer.queryFeatures(q).then(result => {
-        if (!result.features.length) { clipGeometry = null; return; }
-        // Union all city geometries into a simple multi-ring polygon for spatial query
-        // We pass the array of features to queryAllFeatures individually
+        if (!result.features.length) { clipGeometry = null; updateClipZipPanel(); return; }
         clipGeometry = result.features.map(f => f.geometry);
-        clipZipBtn.disabled = false;
-        clipExportBtn.disabled = false;
         const n = checked.length;
         clipStatus.textContent = `Ready to export ${n} ${n === 1 ? "city" : "cities"}.`;
+        updateClipZipPanel();
       });
     }
 
     function updateHighlight() {
       cityHighlightLayer.removeAll();
+      if (fullCountySelected && countyGeometryCache) {
+        cityHighlightLayer.add(new Graphic({ geometry: countyGeometryCache, symbol: cityHighlightSymbol }));
+        return;
+      }
       const checked = [...cityCheckboxScroll.querySelectorAll("input:checked")];
       if (!checked.length) return;
       const inClause = checked.map(cb => `'${cb.value.replace(/'/g, "''")}'`).join(",");
@@ -679,6 +785,68 @@ require([
         });
       });
     }
+
+    function selectFullCounty() {
+      fullCountySelected = true;
+      // Uncheck all individual cities (not the Full County checkbox itself)
+      cityCheckboxScroll.querySelectorAll("input[type=checkbox]:not(#city-cb-full-county)").forEach(cb => (cb.checked = false));
+      cityDropdownBtn.textContent = "Full county selected";
+      cityZoomBtn.disabled = false;
+
+      const applyCounty = geom => {
+        countyGeometryCache = geom;
+        clipGeometry = [geom];
+        updateHighlight();
+        clipStatus.textContent = "Ready to export full county.";
+        updateClipZipPanel();
+      };
+
+      if (countyGeometryCache) {
+        applyCounty(countyGeometryCache);
+      } else if (countyLayer) {
+        countyLayer.load().then(() => {
+          const q = countyLayer.createQuery();
+          q.returnGeometry = true;
+          q.outSpatialReference = { wkid: 4326 };
+          return countyLayer.queryFeatures(q);
+        }).then(result => {
+          if (result.features.length) applyCounty(result.features[0].geometry);
+        });
+      }
+    }
+
+    // Full County checkbox item at top of list
+    const fullCountyItem = document.createElement("div");
+    fullCountyItem.className = "city-checkbox-item city-checkbox-county";
+
+    const fullCountyCb = document.createElement("input");
+    fullCountyCb.type = "checkbox";
+    fullCountyCb.id = "city-cb-full-county";
+
+    const fullCountyLbl = document.createElement("label");
+    fullCountyLbl.htmlFor = "city-cb-full-county";
+    fullCountyLbl.textContent = "Full County";
+
+    fullCountyItem.appendChild(fullCountyCb);
+    fullCountyItem.appendChild(fullCountyLbl);
+    cityCheckboxScroll.appendChild(fullCountyItem);
+
+    const fullCountySep = document.createElement("div");
+    fullCountySep.className = "city-county-separator";
+    cityCheckboxScroll.appendChild(fullCountySep);
+
+    fullCountyCb.addEventListener("change", () => {
+      if (fullCountyCb.checked) {
+        selectFullCounty();
+      } else {
+        fullCountySelected = false;
+        clipGeometry = null;
+        cityHighlightLayer.removeAll();
+        cityDropdownBtn.textContent = "Zoom to...";
+        cityZoomBtn.disabled = true;
+        updateClipZipPanel();
+      }
+    });
 
     if (citiesLayer) {
       citiesLayer.load().then(() => {
@@ -710,7 +878,13 @@ require([
           cityCheckboxScroll.appendChild(item);
 
           cb.addEventListener("change", () => {
-            const count = cityCheckboxScroll.querySelectorAll("input:checked").length;
+            // Uncheck Full County if a city is selected
+            if (cb.checked && fullCountySelected) {
+              fullCountyCb.checked = false;
+              fullCountySelected = false;
+              cityHighlightLayer.removeAll();
+            }
+            const count = cityCheckboxScroll.querySelectorAll("input[type=checkbox]:checked:not(#city-cb-full-county)").length;
             cityDropdownBtn.textContent = count === 0
               ? "Zoom to..."
               : `${count} ${count === 1 ? "city" : "cities"} selected`;
@@ -740,18 +914,23 @@ require([
       });
 
       cityClearBtn.addEventListener("click", () => {
-        cityCheckboxScroll.querySelectorAll("input:checked").forEach(cb => (cb.checked = false));
+        cityCheckboxScroll.querySelectorAll("input[type=checkbox]").forEach(cb => (cb.checked = false));
+        fullCountySelected = false;
+        clipGeometry = null;
+        cityHighlightLayer.removeAll();
         cityDropdownBtn.textContent = "Zoom to...";
         cityZoomBtn.disabled = true;
-        cityHighlightLayer.removeAll();
-        clipGeometry = null;
-        clipZipBtn.disabled = true;
-        clipExportBtn.disabled = true;
-        clipStatus.textContent = "Select cities above to export.";
+        updateClipZipPanel();
       });
 
       cityZoomBtn.addEventListener("click", () => {
-        const checked = [...cityDropdownList.querySelectorAll("input:checked")];
+        if (fullCountySelected && countyGeometryCache) {
+          view.goTo(countyGeometryCache.extent.expand(1.1));
+          cityDropdownList.classList.add("hidden");
+          cityDropdownBtn.classList.remove("active");
+          return;
+        }
+        const checked = [...cityDropdownList.querySelectorAll("input[type=checkbox]:checked:not(#city-cb-full-county)")];
         if (!checked.length) return;
 
         const inClause = checked.map(cb => `'${cb.value.replace(/'/g, "''")}'`).join(",");
@@ -782,6 +961,16 @@ require([
         const rect = clipZipBtn.getBoundingClientRect();
         clipZipDropdown.style.top  = `${rect.bottom + 4}px`;
         clipZipDropdown.style.left = `${rect.left}px`;
+        updateClipZipPanel();
+      }
+    });
+
+    // Keep panel state in sync when layer visibility changes while dropdown is open
+    view.map.allLayers.forEach(l => {
+      if (l.type === "feature" || l.type === "group") {
+        l.watch("visible", () => {
+          if (!clipZipDropdown.classList.contains("hidden")) updateClipZipPanel();
+        });
       }
     });
 
@@ -799,14 +988,12 @@ require([
       const format = document.querySelector("input[name='clip-format']:checked").value;
 
       clipExportBtn.disabled = true;
-      clipZipBtn.disabled = true;
       clipStatus.textContent = "Detecting layers...";
 
       const layers = getExportableLayers(webmap);
       if (!layers.length) {
         clipStatus.textContent = "No visible exportable layers found.";
         clipExportBtn.disabled = false;
-        clipZipBtn.disabled = false;
         return;
       }
 
@@ -820,7 +1007,7 @@ require([
 
         try {
           // Collect features intersecting ANY selected city
-          const allFeatures = [];
+          let allFeatures = [];
           for (const geom of clipGeometry) {
             const feats = await queryAllFeatures(layer, geom);
             // Deduplicate by OBJECTID
@@ -841,11 +1028,13 @@ require([
 
           if (format === "GeoJSON") {
             const geojson = featuresToGeoJSON(allFeatures);
+            allFeatures = null;
             zip.file(`${folderName}.geojson`, geojson);
           } else {
             // SHP
             const { shp, shx } = buildSHP(allFeatures);
             const dbf = buildDBF(allFeatures);
+            allFeatures = null;
             const prj = WGS84_PRJ;
             zip.file(`${folderName}/${folderName}.shp`, shp);
             zip.file(`${folderName}/${folderName}.shx`, shx);
@@ -862,7 +1051,6 @@ require([
       if (!exported) {
         clipStatus.textContent = "No features found in selected area.";
         clipExportBtn.disabled = false;
-        clipZipBtn.disabled = false;
         return;
       }
 
@@ -884,7 +1072,122 @@ require([
         : `Done! ${exported} layer${exported !== 1 ? "s" : ""} exported.`;
       clipStatus.textContent = msg;
       clipExportBtn.disabled = false;
-      clipZipBtn.disabled = false;
+    });
+
+    // ── Basemap dropdown ──────────────────────────────────────────────────────
+    const BASEMAP_OPTIONS = [
+      { label: "Light Gray Canvas", id: null },
+      { label: "Imagery",           id: "satellite" },
+      { label: "Navigation",        id: "streets-navigation-vector" },
+      { label: "OpenStreetMap",     id: "osm" },
+    ];
+
+    const loadedBasemaps = { "Light Gray Canvas": webmap.basemap };
+    const basemapOpacity = {};
+    BASEMAP_OPTIONS.forEach(opt => { basemapOpacity[opt.label] = 1.0; });
+
+    BASEMAP_OPTIONS.slice(1).forEach(opt => {
+      try {
+        const bm = Basemap.fromId(opt.id);
+        bm.load()
+          .then(() => { loadedBasemaps[opt.label] = bm; })
+          .catch(err => console.warn(`Basemap "${opt.label}" failed to load:`, err));
+      } catch (err) {
+        console.warn(`Basemap "${opt.label}" could not be created:`, err);
+      }
+    });
+
+    let activeBasemapLabel = "Light Gray Canvas";
+
+    function applyBasemapOpacity(label, opacity) {
+      const bm = loadedBasemaps[label];
+      if (bm) bm.baseLayers.forEach(l => { l.opacity = opacity; });
+    }
+
+    // Dropdown: radio options
+    const basemapOptionsDiv = document.createElement("div");
+    basemapOptionsDiv.id = "basemap-options";
+    basemapDropdown.appendChild(basemapOptionsDiv);
+
+    BASEMAP_OPTIONS.forEach((opt, i) => {
+      const row = document.createElement("div");
+      row.className = "basemap-option";
+
+      const radio = document.createElement("input");
+      radio.type = "radio";
+      radio.name = "basemap-select";
+      radio.value = opt.label;
+      radio.id = `basemap-opt-${i}`;
+      radio.checked = i === 0;
+
+      const lbl = document.createElement("label");
+      lbl.htmlFor = radio.id;
+      lbl.textContent = opt.label;
+
+      row.appendChild(radio);
+      row.appendChild(lbl);
+      basemapOptionsDiv.appendChild(row);
+
+      radio.addEventListener("change", () => {
+        if (!radio.checked) return;
+        const bm = loadedBasemaps[opt.label];
+        if (!bm) return;
+        activeBasemapLabel = opt.label;
+        view.map.basemap = bm;
+        const savedOpacity = basemapOpacity[opt.label];
+        bmSlider.value = Math.round(savedOpacity * 100);
+        bmValue.textContent = `${bmSlider.value}%`;
+        applyBasemapOpacity(opt.label, savedOpacity);
+      });
+    });
+
+    // Dropdown: opacity slider
+    const bmOpacityRow = document.createElement("div");
+    bmOpacityRow.className = "opacity-inline-wrap";
+    bmOpacityRow.id = "basemap-opacity-row";
+    basemapDropdown.appendChild(bmOpacityRow);
+
+    const bmLabel = document.createElement("span");
+    bmLabel.className = "opacity-inline-label";
+    bmLabel.textContent = "Opacity";
+    bmOpacityRow.appendChild(bmLabel);
+
+    const bmSlider = document.createElement("input");
+    bmSlider.type = "range";
+    bmSlider.min = "0";
+    bmSlider.max = "100";
+    bmSlider.value = "100";
+    bmSlider.className = "opacity-inline-slider";
+    bmOpacityRow.appendChild(bmSlider);
+
+    const bmValue = document.createElement("span");
+    bmValue.className = "opacity-inline-value";
+    bmValue.textContent = "100%";
+    bmOpacityRow.appendChild(bmValue);
+
+    bmSlider.addEventListener("input", () => {
+      const opacity = bmSlider.value / 100;
+      bmValue.textContent = `${bmSlider.value}%`;
+      basemapOpacity[activeBasemapLabel] = opacity;
+      applyBasemapOpacity(activeBasemapLabel, opacity);
+    });
+
+    basemapBtn.addEventListener("click", e => {
+      e.stopPropagation();
+      const isHidden = basemapDropdown.classList.toggle("hidden");
+      basemapBtn.classList.toggle("active", !isHidden);
+      if (!isHidden) {
+        const rect = basemapBtn.getBoundingClientRect();
+        basemapDropdown.style.top  = `${rect.bottom + 4}px`;
+        basemapDropdown.style.left = `${rect.left}px`;
+      }
+    });
+
+    document.addEventListener("click", e => {
+      if (!basemapWrapper.contains(e.target) && !basemapDropdown.contains(e.target)) {
+        basemapDropdown.classList.add("hidden");
+        basemapBtn.classList.remove("active");
+      }
     });
 
     // ── Toggle handlers ───────────────────────────────────────────────────────
@@ -896,5 +1199,22 @@ require([
       layerListWrapper.classList.toggle("hidden");
       layersToggle.classList.toggle("active");
     });
+
+    // Auto-show legend the first time any non-Boundaries group layer becomes visible
+    let legendAutoShown = false;
+    const autoLegendHandles = [];
+    view.map.allLayers
+      .filter(l => l.type === "group" && l.title && !l.title.toLowerCase().includes("boundaries"))
+      .forEach(layer => {
+        const handle = layer.watch("visible", visible => {
+          if (visible && !legendAutoShown) {
+            legendAutoShown = true;
+            legendWrapper.classList.remove("hidden");
+            legendToggle.classList.add("active");
+            autoLegendHandles.forEach(h => h.remove());
+          }
+        });
+        autoLegendHandles.push(handle);
+      });
   });
 });
