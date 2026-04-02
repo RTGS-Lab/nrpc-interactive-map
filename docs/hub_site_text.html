@@ -364,10 +364,10 @@
 
       <div class="panel-2">
         <ol>
-          <li><b>Orient yourself:</b> By default, city and county boundary layers are visible. Use the <b>Zoom to...</b> dropdown to select one or more cities — their boundaries will highlight in blue and the map will zoom to fit them.</li>
-          <li><b>Turn on datasets:</b> Open the <b>Layers</b> panel and toggle on the layers you want to explore. Layers are organized into groups — toggling on a layer inside a group will automatically make that group visible. Use the search bar to quickly find a layer by name.</li>
-          <li><b>Adjust transparency:</b> When a layer is toggled on, an opacity slider appears beneath it in the Layers panel. Drag it left or right to adjust how transparent that layer appears, making it easier to compare overlapping datasets.</li>
-          <li><b>Export data:</b> Once you have cities selected and layers toggled on, click <b>Clip &amp; Zip</b>. Choose SHP or GeoJSON format, optionally enter a file name, and click <b>Export</b>. A ZIP file will download containing all visible (non-Boundaries) datasets intersecting your selected area.</li>
+          <li><b>Select an area:</b> Click <b>Zoom to...</b> and choose one or more cities, or select <b>Full County</b> to use the entire Hennepin County boundary. Click <b>Zoom</b> to fit the map to your selection.</li>
+          <li><b>Turn on datasets:</b> Open the <b>Layers</b> panel and toggle on a layer group — all layers within it will turn on automatically and the group will expand. Use the search bar to find a specific layer.</li>
+          <li><b>Adjust transparency:</b> Click the <b>sliders icon</b> next to any layer or group to open its opacity slider. Use the <b>Basemap</b> dropdown to switch background maps or adjust basemap opacity.</li>
+          <li><b>Export data:</b> Click <b>Clip &amp; Zip</b> — the panel will prompt you if a selection or visible layer is still needed. Once ready, choose SHP or GeoJSON, optionally name the file, and click <b>Export</b> to download a ZIP of all visible non-Boundaries datasets clipped to your selected area.</li>
         </ol>
       </div>
 
@@ -630,26 +630,29 @@
       <div class="panel-1">
         <p><b>Navigate</b></p>
         <ul>
-          <li>Click and drag to pan around the map.</li>
-          <li>Use the <b>+ / -</b> buttons (top right) to zoom in and out, or scroll with your mouse wheel.</li>
+          <li>Click and drag to pan; scroll or use <b>+ / -</b> (top right) to zoom.</li>
           <li>Click the <b>Home</b> icon to return to the default map view.</li>
+          <li>Click the <b>Fullscreen</b> icon (top right, above zoom) to expand the map to fill the browser window.</li>
         </ul>
         <p><b>Legend &amp; Layers</b></p>
         <ul>
-          <li>Click <b>Legend</b> or <b>Layers</b> to toggle those panels open or closed.</li>
-          <li>In the <b>Layers</b> panel, check or uncheck layers to show or hide them on the map. Use the search bar to find a layer by name.</li>
-          <li>When a layer is toggled on, an <b>opacity slider</b> appears beneath it — drag it to adjust that layer's transparency.</li>
+          <li>Click <b>Legend</b> or <b>Layers</b> to toggle those panels open or closed. The Legend opens automatically when you turn on your first dataset.</li>
+          <li>In the <b>Layers</b> panel, toggle a layer group on to make it and all layers within it visible. Use the search bar to find a layer by name.</li>
+          <li>Click the <b>sliders icon</b> next to any layer or group to open its opacity slider.</li>
+        </ul>
+        <p><b>Basemap</b></p>
+        <ul>
+          <li>Click <b>Basemap</b> to switch between Light Gray Canvas, Imagery, and Navigation. Use the opacity slider in the dropdown to adjust the basemap transparency.</li>
         </ul>
         <p><b>Zoom to...</b></p>
         <ul>
-          <li>Click <b>Zoom to...</b> to open a searchable list of cities. Check one or more cities to highlight their boundaries on the map in blue.</li>
-          <li>Click <b>Zoom</b> to fit the map to your selected cities, or <b>Clear</b> to deselect all.</li>
+          <li>Click <b>Zoom to...</b> to open a searchable list of cities — or select <b>Full County</b> to use the entire Hennepin County boundary. Selected areas are highlighted in blue.</li>
+          <li>Click <b>Zoom</b> to fit the map to your selection, or <b>Clear</b> to reset.</li>
         </ul>
-        <p>Export data with <b>Clip &amp; Zip</b></p>
+        <p><b>Clip &amp; Zip</b></p>
         <ul>
-          <li>After selecting cities in <b>Zoom to...</b>, click <b>Clip &amp; Zip</b> to export data.</li>
-          <li>Choose <b>SHP</b> or <b>GeoJSON</b> format, optionally enter a file name, then click <b>Export</b>.</li>
-          <li>All visible non-Boundaries layers intersecting your selected cities will be packaged into a downloadable ZIP file.</li>
+          <li>Click <b>Clip &amp; Zip</b> at any time. The panel will indicate if a city/county selection or visible dataset is still needed before exporting.</li>
+          <li>Choose <b>SHP</b> or <b>GeoJSON</b>, optionally enter a file name, then click <b>Export</b>. All visible non-Boundaries layers intersecting your selected area will download as a ZIP file.</li>
         </ul>
       </div>
 
