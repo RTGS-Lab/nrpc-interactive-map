@@ -162,7 +162,7 @@ require([
     citySearch.addEventListener("input", () => {
       const term = citySearch.value.toLowerCase().trim();
       citySearchClear.classList.toggle("hidden", !term);
-      cityCheckboxScroll.querySelectorAll(".city-checkbox-item").forEach(item => {
+      cityCheckboxScroll.querySelectorAll(".city-checkbox-item, .watershed-checkbox-item").forEach(item => {
         const label = item.querySelector("label");
         item.style.display = !term || (label && label.textContent.toLowerCase().includes(term)) ? "" : "none";
       });
@@ -515,6 +515,8 @@ require([
       l.parent && l.parent.title && l.parent.title.toLowerCase().includes("boundaries")
     );
 
+    const watershedsLayer = view.map.allLayers.find(l => l.title === "Watershed Districts");
+
     let clipGeometry = null;
     let fullCountySelected = false;
     let countyGeometryCache = null;
@@ -539,26 +541,39 @@ require([
 
     function updateClipGeometry() {
       if (fullCountySelected) {
-        // county geometry already set when Full County was selected
         updateClipZipPanel();
         return;
       }
-      const checked = [...cityCheckboxScroll.querySelectorAll("input:checked")];
-      if (!checked.length) {
+      const checkedCities = [...cityCheckboxScroll.querySelectorAll("input[data-type='city']:checked")];
+      const checkedWatersheds = [...cityCheckboxScroll.querySelectorAll("input[data-type='watershed']:checked")];
+      if (!checkedCities.length && !checkedWatersheds.length) {
         clipGeometry = null;
         updateClipZipPanel();
         return;
       }
-      const inClause = checked.map(cb => `'${cb.value.replace(/'/g, "''")}'`).join(",");
-      const q = citiesLayer.createQuery();
-      q.where = `CTU_NAME IN (${inClause})`;
-      q.returnGeometry = true;
-      q.outSpatialReference = { wkid: 4326 };
-      citiesLayer.queryFeatures(q).then(result => {
-        if (!result.features.length) { clipGeometry = null; updateClipZipPanel(); return; }
-        clipGeometry = result.features.map(f => f.geometry);
-        const n = checked.length;
-        clipStatus.textContent = `Ready to export ${n} ${n === 1 ? "city" : "cities"}.`;
+      const promises = [];
+      if (checkedCities.length && citiesLayer) {
+        const inClause = checkedCities.map(cb => `'${cb.value.replace(/'/g, "''")}'`).join(",");
+        const q = citiesLayer.createQuery();
+        q.where = `CTU_NAME IN (${inClause})`;
+        q.returnGeometry = true;
+        q.outSpatialReference = { wkid: 4326 };
+        promises.push(citiesLayer.queryFeatures(q).then(r => r.features));
+      }
+      if (checkedWatersheds.length && watershedsLayer) {
+        const inClause = checkedWatersheds.map(cb => `'${cb.value.replace(/'/g, "''")}'`).join(",");
+        const q = watershedsLayer.createQuery();
+        q.where = `BWSR_NAME IN (${inClause})`;
+        q.returnGeometry = true;
+        q.outSpatialReference = { wkid: 4326 };
+        promises.push(watershedsLayer.queryFeatures(q).then(r => r.features));
+      }
+      Promise.all(promises).then(results => {
+        const features = results.flat();
+        if (!features.length) { clipGeometry = null; updateClipZipPanel(); return; }
+        clipGeometry = features.map(f => f.geometry);
+        const n = checkedCities.length + checkedWatersheds.length;
+        clipStatus.textContent = `Ready to export ${n} ${n === 1 ? "area" : "areas"}.`;
         updateClipZipPanel();
       });
     }
@@ -569,15 +584,27 @@ require([
         cityHighlightLayer.add(new Graphic({ geometry: countyGeometryCache, symbol: cityHighlightSymbol }));
         return;
       }
-      const checked = [...cityCheckboxScroll.querySelectorAll("input:checked")];
-      if (!checked.length) return;
-      const inClause = checked.map(cb => `'${cb.value.replace(/'/g, "''")}'`).join(",");
-      const q = citiesLayer.createQuery();
-      q.where = `CTU_NAME IN (${inClause})`;
-      q.returnGeometry = true;
-      q.outSpatialReference = view.spatialReference;
-      citiesLayer.queryFeatures(q).then(result => {
-        result.features.forEach(f => {
+      const checkedCities = [...cityCheckboxScroll.querySelectorAll("input[data-type='city']:checked")];
+      const checkedWatersheds = [...cityCheckboxScroll.querySelectorAll("input[data-type='watershed']:checked")];
+      const promises = [];
+      if (checkedCities.length && citiesLayer) {
+        const inClause = checkedCities.map(cb => `'${cb.value.replace(/'/g, "''")}'`).join(",");
+        const q = citiesLayer.createQuery();
+        q.where = `CTU_NAME IN (${inClause})`;
+        q.returnGeometry = true;
+        q.outSpatialReference = view.spatialReference;
+        promises.push(citiesLayer.queryFeatures(q).then(r => r.features));
+      }
+      if (checkedWatersheds.length && watershedsLayer) {
+        const inClause = checkedWatersheds.map(cb => `'${cb.value.replace(/'/g, "''")}'`).join(",");
+        const q = watershedsLayer.createQuery();
+        q.where = `BWSR_NAME IN (${inClause})`;
+        q.returnGeometry = true;
+        q.outSpatialReference = view.spatialReference;
+        promises.push(watershedsLayer.queryFeatures(q).then(r => r.features));
+      }
+      Promise.all(promises).then(results => {
+        results.flat().forEach(f => {
           cityHighlightLayer.add(new Graphic({ geometry: f.geometry, symbol: cityHighlightSymbol }));
         });
       });
@@ -632,6 +659,14 @@ require([
     fullCountySep.className = "city-county-separator";
     cityCheckboxScroll.appendChild(fullCountySep);
 
+    const cityContainer = document.createElement("div");
+    cityContainer.id = "city-container";
+    cityCheckboxScroll.appendChild(cityContainer);
+
+    const watershedContainer = document.createElement("div");
+    watershedContainer.id = "watershed-container";
+    cityCheckboxScroll.appendChild(watershedContainer);
+
     fullCountyCb.addEventListener("change", () => {
       if (fullCountyCb.checked) {
         selectFullCounty();
@@ -657,6 +692,13 @@ require([
           result.features.map(f => f.attributes.CTU_NAME).filter(Boolean)
         )].sort();
 
+        if (watershedsLayer) {
+          const cHeader = document.createElement("div");
+          cHeader.className = "city-section-header";
+          cHeader.textContent = "Cities";
+          cityContainer.appendChild(cHeader);
+        }
+
         names.forEach(name => {
           const item = document.createElement("div");
           item.className = "city-checkbox-item";
@@ -664,6 +706,7 @@ require([
           const cb = document.createElement("input");
           cb.type = "checkbox";
           cb.value = name;
+          cb.dataset.type = "city";
           cb.id = `city-cb-${name.replace(/\s+/g, "-")}`;
 
           const lbl = document.createElement("label");
@@ -672,20 +715,19 @@ require([
 
           item.appendChild(cb);
           item.appendChild(lbl);
-          cityCheckboxScroll.appendChild(item);
+          cityContainer.appendChild(item);
 
           cb.addEventListener("change", () => {
-            // Uncheck Full County if a city is selected
             if (cb.checked && fullCountySelected) {
               fullCountyCb.checked = false;
               fullCountySelected = false;
               cityHighlightLayer.removeAll();
             }
-            const count = cityCheckboxScroll.querySelectorAll("input[type=checkbox]:checked:not(#city-cb-full-county)").length;
-            cityDropdownBtn.textContent = count === 0
+            const total = cityCheckboxScroll.querySelectorAll("input[data-type]:checked").length;
+            cityDropdownBtn.textContent = total === 0
               ? "Zoom to..."
-              : `${count} ${count === 1 ? "city" : "cities"} selected`;
-            cityZoomBtn.disabled = count === 0;
+              : `${total} ${total === 1 ? "area" : "areas"} selected`;
+            cityZoomBtn.disabled = total === 0;
             updateHighlight();
             updateClipGeometry();
           });
@@ -727,24 +769,92 @@ require([
           cityDropdownBtn.classList.remove("active");
           return;
         }
-        const checked = [...cityDropdownList.querySelectorAll("input[type=checkbox]:checked:not(#city-cb-full-county)")];
-        if (!checked.length) return;
-
-        const inClause = checked.map(cb => `'${cb.value.replace(/'/g, "''")}'`).join(",");
-        const q = citiesLayer.createQuery();
-        q.where = `CTU_NAME IN (${inClause})`;
-        q.returnGeometry = true;
-        q.outSpatialReference = view.spatialReference;
-
-        citiesLayer.queryFeatures(q).then(result => {
-          if (!result.features.length) return;
-          let extent = result.features[0].geometry.extent;
-          for (let i = 1; i < result.features.length; i++) {
-            extent = extent.union(result.features[i].geometry.extent);
+        const checkedCities = [...cityDropdownList.querySelectorAll("input[data-type='city']:checked")];
+        const checkedWatersheds = [...cityDropdownList.querySelectorAll("input[data-type='watershed']:checked")];
+        const promises = [];
+        if (checkedCities.length && citiesLayer) {
+          const inClause = checkedCities.map(cb => `'${cb.value.replace(/'/g, "''")}'`).join(",");
+          const q = citiesLayer.createQuery();
+          q.where = `CTU_NAME IN (${inClause})`;
+          q.returnGeometry = true;
+          q.outSpatialReference = view.spatialReference;
+          promises.push(citiesLayer.queryFeatures(q).then(r => r.features));
+        }
+        if (checkedWatersheds.length && watershedsLayer) {
+          const inClause = checkedWatersheds.map(cb => `'${cb.value.replace(/'/g, "''")}'`).join(",");
+          const q = watershedsLayer.createQuery();
+          q.where = `BWSR_NAME IN (${inClause})`;
+          q.returnGeometry = true;
+          q.outSpatialReference = view.spatialReference;
+          promises.push(watershedsLayer.queryFeatures(q).then(r => r.features));
+        }
+        if (!promises.length) return;
+        Promise.all(promises).then(results => {
+          const features = results.flat();
+          if (!features.length) return;
+          let extent = features[0].geometry.extent;
+          for (let i = 1; i < features.length; i++) {
+            extent = extent.union(features[i].geometry.extent);
           }
           view.goTo(extent.expand(1.5));
           cityDropdownList.classList.add("hidden");
           cityDropdownBtn.classList.remove("active");
+        });
+      });
+    }
+
+    // ── Watershed Districts dropdown population ───────────────────────────────
+    const toProperCase = str => str.toLowerCase().replace(/\b\w/g, c => c.toUpperCase());
+
+    if (watershedsLayer) {
+      const wHeader = document.createElement("div");
+      wHeader.className = "city-section-header";
+      wHeader.textContent = "Watershed Districts";
+      watershedContainer.appendChild(wHeader);
+
+      watershedsLayer.load().then(() => {
+        const q = watershedsLayer.createQuery();
+        q.outFields = ["BWSR_NAME"];
+        q.returnGeometry = false;
+        q.orderByFields = ["BWSR_NAME"];
+        return watershedsLayer.queryFeatures(q);
+      }).then(result => {
+        const names = [...new Set(
+          result.features.map(f => f.attributes.BWSR_NAME).filter(Boolean)
+        )].sort();
+
+        names.forEach(name => {
+          const item = document.createElement("div");
+          item.className = "watershed-checkbox-item";
+
+          const cb = document.createElement("input");
+          cb.type = "checkbox";
+          cb.value = name;
+          cb.dataset.type = "watershed";
+          cb.id = `watershed-cb-${name.replace(/\s+/g, "-")}`;
+
+          const lbl = document.createElement("label");
+          lbl.htmlFor = cb.id;
+          lbl.textContent = toProperCase(name);
+
+          item.appendChild(cb);
+          item.appendChild(lbl);
+          watershedContainer.appendChild(item);
+
+          cb.addEventListener("change", () => {
+            if (cb.checked && fullCountySelected) {
+              fullCountyCb.checked = false;
+              fullCountySelected = false;
+              cityHighlightLayer.removeAll();
+            }
+            const total = cityCheckboxScroll.querySelectorAll("input[data-type]:checked").length;
+            cityDropdownBtn.textContent = total === 0
+              ? "Zoom to..."
+              : `${total} ${total === 1 ? "area" : "areas"} selected`;
+            cityZoomBtn.disabled = total === 0;
+            updateHighlight();
+            updateClipGeometry();
+          });
         });
       });
     }
