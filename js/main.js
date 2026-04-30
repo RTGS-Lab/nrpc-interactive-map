@@ -8,7 +8,8 @@ require([
   "esri/layers/GraphicsLayer",
   "esri/Graphic",
   "esri/Basemap",
-], (WebMap, MapView, Home, LayerList, Legend, Editor, GraphicsLayer, Graphic, Basemap) => {
+  "esri/geometry/geometryEngine",
+], (WebMap, MapView, Home, LayerList, Legend, Editor, GraphicsLayer, Graphic, Basemap, geometryEngine) => {
 
   const webmap = new WebMap({
     portalItem: {
@@ -930,6 +931,16 @@ require([
               }
             });
           }
+
+          // Clip each feature's geometry to the exact selected boundary
+          const clipUnion = clipGeometry.length === 1
+            ? clipGeometry[0]
+            : geometryEngine.union(clipGeometry);
+          allFeatures = allFeatures.map(f => {
+            if (!f.geometry) return f;
+            const clipped = geometryEngine.intersect(f.geometry, clipUnion);
+            return clipped ? { geometry: clipped, attributes: f.attributes } : null;
+          }).filter(Boolean);
 
           if (!allFeatures.length) { skipped++; continue; }
 
