@@ -1183,5 +1183,109 @@ require([
         });
         autoLegendHandles.push(handle);
       });
+
+    // ── Street View Panel ─────────────────────────────────────────────────
+
+    const svPanel = document.createElement("div");
+    svPanel.id = "street-view-panel";
+
+    const svHeader = document.createElement("div");
+    svHeader.id = "street-view-header";
+    const svTitle = document.createElement("span");
+    svTitle.id = "street-view-title";
+    svTitle.textContent = "Street View";
+    const svClose = document.createElement("button");
+    svClose.id = "street-view-close";
+    svClose.textContent = "×";
+    svClose.title = "Close";
+    svHeader.append(svTitle, svClose);
+
+    const svLocation = document.createElement("div");
+    svLocation.id = "street-view-location";
+
+    const svImgWrap = document.createElement("div");
+    svImgWrap.id = "street-view-img-wrap";
+    const svImg = document.createElement("img");
+    svImg.id = "street-view-img";
+    svImg.alt = "Street View";
+    svImg.classList.add("hidden");
+    const svNoImg = document.createElement("div");
+    svNoImg.id = "street-view-no-img";
+    svNoImg.textContent = "No Street View imagery available near this location.";
+    svNoImg.classList.add("hidden");
+    svImgWrap.append(svImg, svNoImg);
+
+    const svHeadingRow = document.createElement("div");
+    svHeadingRow.id = "street-view-heading-row";
+    const svHeadingLabel = document.createElement("label");
+    svHeadingLabel.textContent = "Heading:";
+    svHeadingLabel.setAttribute("for", "street-view-heading");
+    const svHeadingInput = document.createElement("input");
+    svHeadingInput.type = "range";
+    svHeadingInput.id = "street-view-heading";
+    svHeadingInput.min = "0";
+    svHeadingInput.max = "360";
+    svHeadingInput.value = "0";
+    const svHeadingValue = document.createElement("span");
+    svHeadingValue.id = "street-view-heading-value";
+    svHeadingValue.textContent = "0°";
+    svHeadingRow.append(svHeadingLabel, svHeadingInput, svHeadingValue);
+
+    svPanel.append(svHeader, svLocation, svImgWrap, svHeadingRow);
+    document.body.appendChild(svPanel);
+
+    let svLat = null, svLng = null;
+
+    function buildStreetViewUrl(lat, lng, heading) {
+      return `https://maps.googleapis.com/maps/api/streetview?size=640x480&location=${lat},${lng}&heading=${heading}&fov=90&radius=1000&source=outdoor&return_error_code=true&key=${STREET_VIEW_API_KEY}`;
+    }
+
+    function openStreetView(lat, lng) {
+      svLat = lat;
+      svLng = lng;
+      svHeadingInput.value = "0";
+      svHeadingValue.textContent = "0°";
+      svLocation.textContent = `${lat.toFixed(6)}, ${lng.toFixed(6)}`;
+      svImg.classList.remove("hidden");
+      svNoImg.classList.add("hidden");
+      svImg.src = buildStreetViewUrl(lat, lng, 0);
+      svPanel.classList.add("open");
+    }
+
+    svClose.addEventListener("click", () => {
+      svPanel.classList.remove("open");
+    });
+
+    svImg.addEventListener("error", () => {
+      svImg.classList.add("hidden");
+      svNoImg.classList.remove("hidden");
+    });
+
+    svImg.addEventListener("load", () => {
+      svImg.classList.remove("hidden");
+      svNoImg.classList.add("hidden");
+    });
+
+    svHeadingInput.addEventListener("input", () => {
+      svHeadingValue.textContent = `${svHeadingInput.value}°`;
+    });
+
+    svHeadingInput.addEventListener("change", () => {
+      if (svLat !== null) {
+        svImg.src = buildStreetViewUrl(svLat, svLng, svHeadingInput.value);
+      }
+    });
+
+    view.on("click", async (event) => {
+      const response = await view.hitTest(event);
+      const pointResult = response.results.find(
+        r => r.type === "graphic" && r.graphic.geometry && r.graphic.geometry.type === "point"
+      );
+      if (pointResult) {
+        const pt = pointResult.graphic.geometry;
+        openStreetView(pt.latitude, pt.longitude);
+      }
+    });
+
   });
 });

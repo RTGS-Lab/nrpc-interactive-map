@@ -494,3 +494,116 @@ body,
   cursor: default;
 }
 
+/* ── Street View Panel ────────────────────────────────────────────────────── */
+
+#street-view-panel {
+  position: fixed;
+  top: 0;
+  right: 0;
+  width: 50vw;
+  height: 100%;
+  background: white;
+  border-left: 1px solid #ccc;
+  box-shadow: -2px 0 10px rgba(0, 0, 0, 0.2);
+  z-index: 150;
+  display: flex;
+  flex-direction: column;
+  transform: translateX(calc(100% + 20px));
+  transition: transform 0.3s ease;
+}
+
+#street-view-panel.open {
+  transform: translateX(0);
+}
+
+#street-view-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 10px;
+  border-bottom: 1px solid #e0e0e0;
+  flex-shrink: 0;
+}
+
+#street-view-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: #323232;
+}
+
+#street-view-close {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 20px;
+  color: #666;
+  line-height: 1;
+  padding: 0;
+}
+
+#street-view-close:hover {
+  color: #323232;
+}
+
+#street-view-location {
+  padding: 5px 10px;
+  font-size: 11px;
+  color: #888;
+  font-family: inherit;
+  border-bottom: 1px solid #e0e0e0;
+  flex-shrink: 0;
+}
+
+#street-view-img-wrap {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  background: #f0f0f0;
+  min-height: 0;
+}
+
+#street-view-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+#street-view-no-img {
+  text-align: center;
+  padding: 20px;
+  color: #888;
+  font-size: 13px;
+  font-family: inherit;
+  line-height: 1.5;
+}
+
+#street-view-heading-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-top: 1px solid #e0e0e0;
+  flex-shrink: 0;
+  font-size: 12px;
+  color: #666;
+  font-family: inherit;
+}
+
+#street-view-heading {
+  flex: 1;
+  accent-color: #0079c1;
+  cursor: pointer;
+}
+
+#street-view-heading-value {
+  width: 32px;
+  text-align: right;
+  flex-shrink: 0;
+  font-size: 12px;
+  color: #666;
+  font-family: inherit;
+}
+
