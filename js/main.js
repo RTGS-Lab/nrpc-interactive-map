@@ -1205,15 +1205,33 @@ require([
 
     const svImgWrap = document.createElement("div");
     svImgWrap.id = "street-view-img-wrap";
+
     const svImg = document.createElement("img");
     svImg.id = "street-view-img";
     svImg.alt = "Street View";
-    svImg.classList.add("hidden");
+
+    const svAerialImg = document.createElement("img");
+    svAerialImg.id = "street-view-aerial-img";
+    svAerialImg.alt = "Aerial";
+
     const svNoImg = document.createElement("div");
     svNoImg.id = "street-view-no-img";
     svNoImg.textContent = "No Street View imagery available near this location.";
-    svNoImg.classList.add("hidden");
-    svImgWrap.append(svImg, svNoImg);
+
+    const svThumbBtn = document.createElement("button");
+    svThumbBtn.id = "sv-thumb-btn";
+    const svThumbImg = document.createElement("img");
+    svThumbImg.id = "sv-thumb-img";
+    svThumbImg.alt = "";
+    const svThumbLabel = document.createElement("span");
+    svThumbLabel.id = "sv-thumb-label";
+    svThumbBtn.append(svThumbImg, svThumbLabel);
+
+    const svPlaceholder = document.createElement("div");
+    svPlaceholder.id = "sv-placeholder";
+    svPlaceholder.textContent = "Click a point on the map to load Street View.";
+
+    svImgWrap.append(svImg, svAerialImg, svNoImg, svPlaceholder, svThumbBtn);
 
     const svHeadingRow = document.createElement("div");
     svHeadingRow.id = "street-view-heading-row";
@@ -1231,13 +1249,48 @@ require([
     svHeadingValue.textContent = "0°";
     svHeadingRow.append(svHeadingLabel, svHeadingInput, svHeadingValue);
 
+    svHeadingRow.style.display = "none";
+
+    const svTab = document.createElement("button");
+    svTab.id = "sv-tab";
+    svTab.title = "Toggle Street View";
+    svTab.textContent = "◀";
+
     svPanel.append(svHeader, svLocation, svImgWrap, svHeadingRow);
+    svPanel.appendChild(svTab);
     document.body.appendChild(svPanel);
 
-    let svLat = null, svLng = null;
+    let svLat = null, svLng = null, svMode = "street";
 
-    function buildStreetViewUrl(lat, lng, heading) {
-      return `https://maps.googleapis.com/maps/api/streetview?size=640x480&location=${lat},${lng}&heading=${heading}&fov=90&radius=1000&source=outdoor&return_error_code=true&key=${STREET_VIEW_API_KEY}`;
+    function buildStreetViewUrl(lat, lng, heading, size = "640x480") {
+      return `https://maps.googleapis.com/maps/api/streetview?size=${size}&location=${lat},${lng}&heading=${heading}&fov=90&radius=1000&source=outdoor&return_error_code=true&key=${STREET_VIEW_API_KEY}`;
+    }
+
+    function buildAerialUrl(lat, lng, size = "640x480") {
+      const [w, h] = size.split("x").map(Number);
+      const half = 0.003;
+      const bbox = `${lng - half},${lat - half * 0.75},${lng + half},${lat + half * 0.75}`;
+      return `https://services.arcgisonline.com/arcgis/rest/services/World_Imagery/MapServer/export?bbox=${bbox}&bboxSR=4326&size=${w}%2C${h}&imageSR=4326&format=png&f=image`;
+    }
+
+    function showStreetMode() {
+      svMode = "street";
+      svImg.style.display = "block";
+      svAerialImg.style.display = "none";
+      svNoImg.style.display = "none";
+      svHeadingRow.style.display = "";
+      svThumbImg.src = buildAerialUrl(svLat, svLng, "200x150");
+      svThumbLabel.textContent = "Aerial";
+    }
+
+    function showAerialMode() {
+      svMode = "aerial";
+      svAerialImg.style.display = "block";
+      svImg.style.display = "none";
+      svNoImg.style.display = "none";
+      svHeadingRow.style.display = "none";
+      svThumbImg.src = buildStreetViewUrl(svLat, svLng, svHeadingInput.value, "200x150");
+      svThumbLabel.textContent = "Street View";
     }
 
     function openStreetView(lat, lng) {
@@ -1246,24 +1299,38 @@ require([
       svHeadingInput.value = "0";
       svHeadingValue.textContent = "0°";
       svLocation.textContent = `${lat.toFixed(6)}, ${lng.toFixed(6)}`;
-      svImg.classList.remove("hidden");
-      svNoImg.classList.add("hidden");
+      svAerialImg.src = buildAerialUrl(lat, lng);
+      svThumbBtn.style.display = "flex";
+      svPlaceholder.style.display = "none";
       svImg.src = buildStreetViewUrl(lat, lng, 0);
+      showStreetMode();
+      svTab.textContent = "▶";
       svPanel.classList.add("open");
     }
 
     svClose.addEventListener("click", () => {
       svPanel.classList.remove("open");
+      svTab.textContent = "◀";
+    });
+
+    svTab.addEventListener("click", () => {
+      if (svPanel.classList.contains("open")) {
+        svPanel.classList.remove("open");
+        svTab.textContent = "◀";
+      } else {
+        svPanel.classList.add("open");
+        svTab.textContent = "▶";
+      }
     });
 
     svImg.addEventListener("error", () => {
-      svImg.classList.add("hidden");
-      svNoImg.classList.remove("hidden");
+      svImg.style.display = "none";
+      svNoImg.style.display = "flex";
     });
 
     svImg.addEventListener("load", () => {
-      svImg.classList.remove("hidden");
-      svNoImg.classList.add("hidden");
+      svImg.style.display = "block";
+      svNoImg.style.display = "none";
     });
 
     svHeadingInput.addEventListener("input", () => {
@@ -1271,8 +1338,16 @@ require([
     });
 
     svHeadingInput.addEventListener("change", () => {
-      if (svLat !== null) {
+      if (svLat !== null && svMode === "street") {
         svImg.src = buildStreetViewUrl(svLat, svLng, svHeadingInput.value);
+      }
+    });
+
+    svThumbBtn.addEventListener("click", () => {
+      if (svMode === "street") {
+        showAerialMode();
+      } else {
+        showStreetMode();
       }
     });
 

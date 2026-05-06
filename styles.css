@@ -503,12 +503,11 @@ body,
   width: 50vw;
   height: 100%;
   background: white;
-  border-left: 1px solid #ccc;
-  box-shadow: -2px 0 10px rgba(0, 0, 0, 0.2);
+  border-left: 1px solid #999;
   z-index: 150;
   display: flex;
   flex-direction: column;
-  transform: translateX(calc(100% + 20px));
+  transform: translateX(calc(100% + 2px));
   transition: transform 0.3s ease;
 }
 
@@ -556,28 +555,112 @@ body,
 
 #street-view-img-wrap {
   flex: 1;
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  position: relative;
   overflow: hidden;
   background: #f0f0f0;
   min-height: 0;
 }
 
-#street-view-img {
+#street-view-img,
+#street-view-aerial-img {
+  position: absolute;
+  inset: 0;
   width: 100%;
   height: 100%;
   object-fit: cover;
-  display: block;
+  display: none;
 }
 
 #street-view-no-img {
+  position: absolute;
+  inset: 0;
+  display: none;
+  align-items: center;
+  justify-content: center;
   text-align: center;
   padding: 20px;
   color: #888;
   font-size: 13px;
   font-family: inherit;
   line-height: 1.5;
+}
+
+#sv-placeholder {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 20px;
+  color: #aaa;
+  font-size: 13px;
+  font-family: inherit;
+  line-height: 1.5;
+}
+
+#sv-tab {
+  position: absolute;
+  top: 25%;
+  left: -25px;
+  transform: translateY(-50%);
+  width: 25px;
+  height: 64px;
+  background: white;
+  border: 1px solid #999;
+  border-right: none;
+  border-radius: 4px 0 0 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  font-size: 14px;
+  color: #555;
+  user-select: none;
+  padding: 0;
+}
+
+#sv-tab:hover {
+  background: #f0f0f0;
+  color: #222;
+}
+
+#sv-thumb-btn {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  width: 96px;
+  border: 2px solid white;
+  border-radius: 4px;
+  overflow: hidden;
+  cursor: pointer;
+  padding: 0;
+  background: none;
+  box-shadow: 0 1px 5px rgba(0, 0, 0, 0.45);
+  transition: transform 0.15s ease;
+  display: none;
+  flex-direction: column;
+}
+
+#sv-thumb-btn:hover {
+  transform: scale(1.06);
+}
+
+#sv-thumb-img {
+  width: 96px;
+  height: 72px;
+  display: block;
+  object-fit: cover;
+}
+
+#sv-thumb-label {
+  background: rgba(0, 0, 0, 0.6);
+  color: white;
+  font-size: 10px;
+  font-family: inherit;
+  text-align: center;
+  padding: 3px 0;
+  display: block;
 }
 
 #street-view-heading-row {
