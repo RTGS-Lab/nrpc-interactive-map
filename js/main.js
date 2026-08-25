@@ -1183,5 +1183,11 @@ require([
         });
         autoLegendHandles.push(handle);
       });
+
+    // ── Parcel Report ─────────────────────────────────────────────────────
+    // The whole feature lives in js/parcel-report.js; this is the only hook.
+    if (window.NRPCParcelReport) {
+      window.NRPCParcelReport.init({ view, Graphic, GraphicsLayer });
+    }
   });
 });
