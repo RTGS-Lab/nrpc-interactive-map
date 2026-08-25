@@ -81,3 +81,44 @@ This is driven by `layer.watch("visible", ...)` in `listItemCreatedFunction`.
 - **Basemap IDs:** Only use verified ArcGIS basemap string IDs. `"osm"` was removed — it returns "Access Blocked" in this context. Valid options in use: `"satellite"`, `"streets-navigation-vector"`.
 - **Fullscreen in iframe:** The ArcGIS Hub embed blocks the browser Fullscreen API. The fullscreen button is replaced with an open-in-new-tab button (`window.open`) that works from within the iframe.
 - **Contribute panel placement:** The Editor widget panel is added via `view.ui.add()` at top-right rather than the left panel stack, to avoid crowding when Legend and Layers are open simultaneously.
+
+---
+
+## Street View Panel (branch `street-view`)
+
+A slide-in panel on the right half of the viewport. Clicking the map opens it on
+the clicked location and shows two interchangeable images:
+
+| View | Source | Key needed? |
+|---|---|---|
+| Street View | Google Street View Static API | yes |
+| Aerial | ArcGIS `World_Imagery/MapServer/export` | no |
+
+The small thumbnail in the top-right corner of the image flips between the two.
+A heading slider (0–360°) re-requests the Street View image; it is hidden in
+aerial mode.
+
+### The API key
+
+`js/config.js` defines one global, `STREET_VIEW_API_KEY`, and is **git-ignored**.
+
+- **Deploy:** `.github/workflows/deploy.yml` writes it from the repository secret
+  `GOOGLE_STREET_VIEW_API_KEY` before uploading the Pages artifact.
+- **Local:** `cp js/config.example.js js/config.js` and paste a key.
+
+The key is served to every visitor of a public site, so it **must** be
+HTTP-referrer-restricted (to `rtgs-lab.github.io/*`) and limited to the Street
+View Static API in the Google Cloud console. There is no way to hide it — the
+restriction is the control.
+
+If `js/config.js` is missing or still holds the `YOUR_...` placeholder, the panel
+degrades to aerial-only rather than throwing. Never reference
+`STREET_VIEW_API_KEY` directly; use the `SV_KEY` constant, which is `null` when
+no usable key is present.
+
+### Interaction with other panels
+
+`#street-view-panel` is `position: fixed` at `z-index: 150` over the right half
+of the window. The Contribute (Editor) panel is added at `top-right` through
+`view.ui`, so an open Street View panel covers it. Close one before using the
+other.

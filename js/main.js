@@ -1185,6 +1185,23 @@ require([
       });
 
     // ── Street View Panel ─────────────────────────────────────────────────
+    //
+    // API key: js/config.js is git-ignored. GitHub Actions writes it at deploy
+    // time from the GOOGLE_STREET_VIEW_API_KEY secret; for local work run
+    //   cp js/config.example.js js/config.js
+    // and paste a key. The key MUST be HTTP-referrer-restricted in the Google
+    // Cloud console — it ships to the browser in a public site.
+    //
+    // With no usable key the panel still works: it falls back to the key-free
+    // ArcGIS World Imagery aerial view and says so, instead of throwing a
+    // ReferenceError on the first click.
+
+    const SV_KEY =
+      (typeof STREET_VIEW_API_KEY === "string" &&
+        STREET_VIEW_API_KEY.trim() &&
+        !STREET_VIEW_API_KEY.startsWith("YOUR_"))
+        ? STREET_VIEW_API_KEY.trim()
+        : null;
 
     const svPanel = document.createElement("div");
     svPanel.id = "street-view-panel";
@@ -1193,7 +1210,7 @@ require([
     svHeader.id = "street-view-header";
     const svTitle = document.createElement("span");
     svTitle.id = "street-view-title";
-    svTitle.textContent = "Street View";
+    svTitle.textContent = SV_KEY ? "Street View" : "Aerial View";
     const svClose = document.createElement("button");
     svClose.id = "street-view-close";
     svClose.textContent = "×";
@@ -1229,7 +1246,6 @@ require([
 
     const svPlaceholder = document.createElement("div");
     svPlaceholder.id = "sv-placeholder";
-    svPlaceholder.textContent = "Click a point on the map to load Street View.";
 
     svImgWrap.append(svImg, svAerialImg, svNoImg, svPlaceholder, svThumbBtn);
 
@@ -1248,22 +1264,29 @@ require([
     svHeadingValue.id = "street-view-heading-value";
     svHeadingValue.textContent = "0°";
     svHeadingRow.append(svHeadingLabel, svHeadingInput, svHeadingValue);
-
     svHeadingRow.style.display = "none";
 
     const svTab = document.createElement("button");
     svTab.id = "sv-tab";
-    svTab.title = "Toggle Street View";
+    svTab.title = SV_KEY ? "Toggle Street View" : "Toggle aerial view";
     svTab.textContent = "◀";
 
     svPanel.append(svHeader, svLocation, svImgWrap, svHeadingRow);
     svPanel.appendChild(svTab);
     document.body.appendChild(svPanel);
 
-    let svLat = null, svLng = null, svMode = "street";
+    let svLat = null;
+    let svLng = null;
+    let svMode = SV_KEY ? "street" : "aerial";
+
+    const SV_PROMPT = SV_KEY
+      ? "Click anywhere on the map to load Street View."
+      : "Click anywhere on the map to load aerial imagery.\n" +
+        "No Google Street View key is configured, so street-level photos are unavailable.";
 
     function buildStreetViewUrl(lat, lng, heading, size = "640x480") {
-      return `https://maps.googleapis.com/maps/api/streetview?size=${size}&location=${lat},${lng}&heading=${heading}&fov=90&radius=1000&source=outdoor&return_error_code=true&key=${STREET_VIEW_API_KEY}`;
+      if (!SV_KEY) return null;
+      return `https://maps.googleapis.com/maps/api/streetview?size=${size}&location=${lat},${lng}&heading=${heading}&fov=90&radius=1000&source=outdoor&return_error_code=true&key=${SV_KEY}`;
     }
 
     function buildAerialUrl(lat, lng, size = "640x480") {
@@ -1273,24 +1296,54 @@ require([
       return `https://services.arcgisonline.com/arcgis/rest/services/World_Imagery/MapServer/export?bbox=${bbox}&bboxSR=4326&size=${w}%2C${h}&imageSR=4326&format=png&f=image`;
     }
 
+    function showPlaceholder() {
+      svPlaceholder.textContent = SV_PROMPT;
+      svPlaceholder.style.display = "flex";
+      svImg.style.display = "none";
+      svAerialImg.style.display = "none";
+      svNoImg.style.display = "none";
+      svThumbBtn.style.display = "none";
+      svHeadingRow.style.display = "none";
+    }
+
     function showStreetMode() {
+      if (!SV_KEY) return showAerialMode();
       svMode = "street";
+      svPlaceholder.style.display = "none";
       svImg.style.display = "block";
       svAerialImg.style.display = "none";
       svNoImg.style.display = "none";
       svHeadingRow.style.display = "";
       svThumbImg.src = buildAerialUrl(svLat, svLng, "200x150");
       svThumbLabel.textContent = "Aerial";
+      svThumbBtn.style.display = "flex";
     }
 
     function showAerialMode() {
       svMode = "aerial";
+      svPlaceholder.style.display = "none";
       svAerialImg.style.display = "block";
       svImg.style.display = "none";
       svNoImg.style.display = "none";
       svHeadingRow.style.display = "none";
-      svThumbImg.src = buildStreetViewUrl(svLat, svLng, svHeadingInput.value, "200x150");
-      svThumbLabel.textContent = "Street View";
+      if (SV_KEY) {
+        svThumbImg.src = buildStreetViewUrl(svLat, svLng, svHeadingInput.value, "200x150");
+        svThumbLabel.textContent = "Street View";
+        svThumbBtn.style.display = "flex";
+      } else {
+        // Aerial is the only view available, so there is nothing to flip to.
+        svThumbBtn.style.display = "none";
+      }
+    }
+
+    function openPanel() {
+      svPanel.classList.add("open");
+      svTab.textContent = "▶";
+    }
+
+    function closePanel() {
+      svPanel.classList.remove("open");
+      svTab.textContent = "◀";
     }
 
     function openStreetView(lat, lng) {
@@ -1300,26 +1353,23 @@ require([
       svHeadingValue.textContent = "0°";
       svLocation.textContent = `${lat.toFixed(6)}, ${lng.toFixed(6)}`;
       svAerialImg.src = buildAerialUrl(lat, lng);
-      svThumbBtn.style.display = "flex";
-      svPlaceholder.style.display = "none";
-      svImg.src = buildStreetViewUrl(lat, lng, 0);
-      showStreetMode();
-      svTab.textContent = "▶";
-      svPanel.classList.add("open");
+      if (SV_KEY) {
+        svImg.src = buildStreetViewUrl(lat, lng, 0);
+        showStreetMode();
+      } else {
+        showAerialMode();
+      }
+      openPanel();
     }
 
-    svClose.addEventListener("click", () => {
-      svPanel.classList.remove("open");
-      svTab.textContent = "◀";
-    });
+    svClose.addEventListener("click", closePanel);
 
     svTab.addEventListener("click", () => {
       if (svPanel.classList.contains("open")) {
-        svPanel.classList.remove("open");
-        svTab.textContent = "◀";
+        closePanel();
       } else {
-        svPanel.classList.add("open");
-        svTab.textContent = "▶";
+        if (svLat === null) showPlaceholder();
+        openPanel();
       }
     });
 
@@ -1329,8 +1379,16 @@ require([
     });
 
     svImg.addEventListener("load", () => {
+      if (svMode !== "street") return;
       svImg.style.display = "block";
       svNoImg.style.display = "none";
+    });
+
+    svAerialImg.addEventListener("error", () => {
+      if (svMode !== "aerial") return;
+      svAerialImg.style.display = "none";
+      svNoImg.textContent = "No aerial imagery available for this location.";
+      svNoImg.style.display = "flex";
     });
 
     svHeadingInput.addEventListener("input", () => {
@@ -1338,26 +1396,27 @@ require([
     });
 
     svHeadingInput.addEventListener("change", () => {
-      if (svLat !== null && svMode === "street") {
+      if (svLat !== null && svMode === "street" && SV_KEY) {
         svImg.src = buildStreetViewUrl(svLat, svLng, svHeadingInput.value);
       }
     });
 
     svThumbBtn.addEventListener("click", () => {
-      if (svMode === "street") {
-        showAerialMode();
-      } else {
-        showStreetMode();
-      }
+      if (svMode === "street") showAerialMode();
+      else showStreetMode();
     });
+
+    showPlaceholder();
 
     view.on("click", async (event) => {
       const response = await view.hitTest(event);
       const pointResult = response.results.find(
         r => r.type === "graphic" && r.graphic.geometry && r.graphic.geometry.type === "point"
       );
-      if (pointResult) {
-        const pt = pointResult.graphic.geometry;
+      // Prefer a clicked point feature; fall back to the raw map point so the
+      // panel is reachable even when no point layer is switched on.
+      const pt = pointResult ? pointResult.graphic.geometry : event.mapPoint;
+      if (pt && typeof pt.latitude === "number" && typeof pt.longitude === "number") {
         openStreetView(pt.latitude, pt.longitude);
       }
     });
