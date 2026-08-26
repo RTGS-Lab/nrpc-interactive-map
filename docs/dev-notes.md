@@ -87,16 +87,143 @@ This is driven by `layer.watch("visible", ...)` in `listItemCreatedFunction`.
 ## Street View Panel (branch `street-view`)
 
 A slide-in panel on the right half of the viewport. Clicking the map opens it on
-the clicked location and shows two interchangeable images:
+the clicked location and shows a **live Google panorama** —
+`google.maps.StreetViewPanorama` from the Maps JavaScript API, not a photo.
 
-| View | Source | Key needed? |
-|---|---|---|
-| Street View | Google Street View Static API | yes |
-| Aerial | ArcGIS `World_Imagery/MapServer/export` | no |
+That one object is why the panel does what it does: the chevron arrows along the
+road are `linksControl`, walking to the next scene by clicking the road is
+`clickToGo`, and dragging to look around and the keyboard arrows come free once
+the panorama has focus. Earlier revisions faked all of this with a static `<img>`
+and a heading slider; both are gone.
 
-The small thumbnail in the top-right corner of the image flips between the two.
-A heading slider (0–360°) re-requests the Street View image; it is hidden in
-aerial mode.
+**There is no aerial view in this panel any more.** The map underneath has an
+aerial basemap, which is the aerial view; a second one inside the panel was a
+workaround for having no key, and it made the panel lie about what it was. With
+no usable key the panel now says so plainly instead of showing something else.
+
+### What the key needs
+
+The key needs **two** things, and they are separate switches in the Google Cloud
+console. Enabling the API on the project is only half of it:
+
+1. The **Maps JavaScript API** and the **Street View Static API** enabled on the
+   project (APIs & Services → Enable APIs).
+2. Both of them present in the key's own **API restrictions** allow-list
+   (Credentials → the key → API restrictions).
+
+Miss the second and the panorama fails with `ApiTargetBlockedMapError` in the
+console while the project looks correctly configured. Note the metadata endpoint
+travels with the *Static* API, not the JS one.
+
+Billing changes with this branch: the panel used to bill **Static Street View**
+(per image) and now bills **Dynamic Street View** (per panorama load), which is
+a Pro-tier SKU. The metadata endpoint remains free and consumes no quota.
+
+Referrer restrictions need two entries per host — the bare origin and `/*`:
+`http://127.0.0.1:8766` and `http://127.0.0.1:8766/*` for the local demo,
+`https://rtgs-lab.github.io` and `https://rtgs-lab.github.io/*` for Pages.
+
+The key resolution order (localStorage → `config.js` → ask in the panel) is
+unchanged; see below. One new constraint: **the Maps JS API bootstraps once per
+page load and keeps the key it was given.** A key changed after the API has
+loaded cannot be swapped in underneath it, so the panel says "reload the page to
+use it" rather than failing silently.
+
+### The imagery date
+
+`StreetViewPanoramaData.imageDate`, rendered centred at the bottom of the
+picture ("Imagery: October 2023") and refreshed on every `pano_changed`. It is
+not a property of the panorama object, so it comes from a `StreetViewService`
+lookup of the pano id currently on screen.
+
+Google documents the format as `YYYY-MM` but warns that granularity varies, so
+it is parsed defensively: a bare `YYYY` renders as the year rather than being
+forced into a wrong month, and **no date means no badge** — never a placeholder.
+
+### The dates row ("Other dates")
+
+**No supported Google API lists a location's other capture dates.**
+`StreetViewPanoramaData` carries one `imageDate`, and its `links` are the
+adjacent panoramas of the same survey, not earlier ones. "See more dates" is a
+Google Maps end-user feature with no developer equivalent.
+
+There is an **undocumented `time` array** on `StreetViewPanoramaData` that does
+carry the history — verified live returning 11 dates from 2007 to 2023 for
+downtown Minneapolis. The panel uses it, but treats it as weather: the id and
+date keys inside each entry are minified symbols that Google renames between
+releases, so `svOtherDates()` *searches* each entry for something pano-shaped
+and something date-shaped rather than reading fixed key names, and renders
+nothing if it finds neither. When the array is absent the row says "not
+published by the Maps API" and hands the current pano to Google Maps via a
+documented Maps URL (`map_action=pano&pano=<id>`), which is the one place the
+feature genuinely exists.
+
+Do not build anything load-bearing on `time`. It can empty out with no
+deprecation notice.
+
+### The map ↔ panorama link
+
+While the panel is open the map carries a **pulsing dot** at the camera position
+and a **wedge** showing which way it is facing, and it recentres to follow as the
+user walks down the road. Both appear when the panel opens and go when it closes.
+
+The dot is an HTML element in `view.container`, positioned from `view.toScreen()`
+— ArcGIS symbols cannot animate, and a CSS keyframe pulse is the plainest way to
+get one. It carries `pointer-events: none` so it does not swallow map clicks. The
+wedge stays a `Graphic` because it is a real geographic shape that should scale
+with the zoom.
+
+Four things here are easy to get wrong, and all four were:
+
+- **`view.toScreen()` does not autocast.** `Graphic` happily accepts a
+  `{type:"point", …}` literal; `toScreen()` throws
+  `mapview:projection-not-possible` on one. Pass a real `esri/geometry/Point`.
+- **The view declines to project while it is still settling**, which is exactly
+  when the dot is first placed. A refusal is retried on the next frame.
+- **A plain map click emits drag `start` and `end` with no `update`.** Treating
+  `start` as user interaction made every first click skip its own recentre. Only
+  a drag that actually moves counts, and the flag has a watchdog so a `start`
+  whose `end` never arrives cannot disable recentring for the session.
+- **The panel takes 0.3s to slide in.** Measuring how much map it covers
+  mid-slide gives the wrong answer, and that recentre then races the corrected
+  one. Wait for `transitionend`, and allow only one `goTo` in flight.
+
+The recentre aims at the middle of the *visible* map, not the container centre,
+because the panel covers the right half — and it stands down while the user is
+dragging or wheeling. Zoom is never changed; recentring alone always brings an
+off-screen dot into view.
+
+### Error states
+
+`window.gm_authFailure` is the Maps JS API's only authentication signal. It tells
+you *that* the key was refused and nothing about why — the reason is console-only
+(`ApiTargetBlockedMapError`, `RefererNotAllowedMapError`, …). `StreetViewStatus`
+has no auth value at all, so both paths need handling:
+
+| What happened | What the panel shows |
+|---|---|
+| `StreetViewStatus.OK` | the panorama, with its date badge |
+| `ZERO_RESULTS` | "No Street View imagery available near this location." |
+| other `StreetViewStatus` | "Street View could not be loaded (Google returned …)." |
+| `gm_authFailure` | "Google rejected this API key for Street View…" plus a **Change key** link |
+| the JS API script fails to load | "Could not load the Google Maps JavaScript API…" plus **Change key** |
+| no key at all | "Street View needs a Google Maps API key." and the key form, once |
+
+On an auth failure the panel additionally probes the free Static metadata
+endpoint for Google's own sentence, which for a referrer-restricted key names the
+referer it actually saw. It is best-effort and clearly attributed, because that
+endpoint reports on the *Static* API and can therefore be healthy while the JS
+API is blocked — which is precisely the `ApiTargetBlockedMapError` case.
+
+A `svPanoToken` counter discards a slow lookup whose click has been superseded.
+
+### One state at a time
+
+The stage has four mutually exclusive states — `placeholder`, `checking`,
+`message`, `pano` — tracked in `svStageState`. The date badge and the dates row
+belong to the picture and render only over `pano`. Without that guard a
+`StreetViewService` callback still in flight when an error lands paints the date
+and the chips on top of the error message.
 
 ### The API key
 
@@ -113,7 +240,7 @@ first hit wins:
    locally, `cp js/config.example.js js/config.js` and paste a key.
 3. **Ask** — on the first Street View request of the session with no key, the
    panel opens an in-page key form. Declining ("Not now") is remembered for the
-   session and the panel stays on aerial; it does not ask again.
+   session; it does not ask again.
 
 The footer carries the control: `Add key` / `Change key`, and `Clear key` when
 the key came from localStorage. Clearing a typed key falls back to `config.js`
@@ -124,38 +251,12 @@ The key entry is an in-page `<input>`, never `window.prompt` — a blocking
 dialog freezes anything driving the page.
 
 Any key is served to every visitor of a public site, so it **must** be
-HTTP-referrer-restricted (to `rtgs-lab.github.io/*`) and limited to the Street
-View Static API in the Google Cloud console. There is no way to hide it — the
-restriction is the control.
+HTTP-referrer-restricted. There is no way to hide it — the restriction is the
+control.
 
-With no usable key from any source the panel degrades to aerial-only rather than
-throwing. Never reference `STREET_VIEW_API_KEY` directly; use the `svKey`
-variable, which is `null` when no usable key is present, and re-resolve through
-`svResolveKey()` after any change.
-
-### "No imagery" vs. "bad key"
-
-The Static Street View endpoint answers *no photo here* and *your key is
-refused* with the same HTTP error, so an `img.onerror` handler reported a
-rejected key as "No Street View imagery available near this location" — which
-sent people hunting for a coverage gap that did not exist.
-
-Every new location is therefore checked against the **metadata endpoint** first
-(`/maps/api/streetview/metadata`, CORS-enabled, free), and the image is only
-requested once it answers `OK`:
-
-| metadata `status` | What the panel shows |
-|---|---|
-| `OK` | the Street View image |
-| `ZERO_RESULTS` / `NOT_FOUND` | "No Street View imagery available near this location." |
-| `REQUEST_DENIED` | "Street View key rejected: *<Google's `error_message`, verbatim>* — check the key's website restrictions." plus a **Change key** link |
-| `OVER_QUERY_LIMIT` | "Street View quota exceeded: …" plus **Change key** |
-| anything else | same key-error treatment |
-| fetch throws | aerial view, footer says "Could not reach Google" |
-
-Google's `error_message` is quoted verbatim because for a referrer-restricted
-key it names the referer it actually saw — the one fact that fixes the problem.
-A `svMetaToken` counter discards a slow check whose click has been superseded.
+Never reference `STREET_VIEW_API_KEY` directly; use the `svKey` variable, which
+is `null` when no usable key is present, and re-resolve through `svResolveKey()`
+after any change.
 
 ### Interaction with other panels
 
