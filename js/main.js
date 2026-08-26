@@ -1396,6 +1396,10 @@ require([
 
     let svLat = null;
     let svLng = null;
+    // Which of the stage's mutually exclusive states is up. The date badge and
+    // the dates row belong to the picture, so they only ever show over "pano";
+    // a late service callback must not paint them over an error message.
+    let svStageState = "placeholder"; // "placeholder" | "checking" | "message" | "pano"
 
     function svPromptText() {
       return svKey
@@ -1410,6 +1414,7 @@ require([
     // panorama, a message, or the "click the map" placeholder.
 
     function svShowPlaceholder() {
+      svStageState = "placeholder";
       svPlaceholder.textContent = svPromptText();
       svPlaceholder.style.display = "flex";
       svNoImg.style.display = "none";
@@ -1421,6 +1426,7 @@ require([
     }
 
     function svShowMessage(text, offerKey) {
+      svStageState = "message";
       svNoImgText.textContent = text;
       svNoImgKeyBtn.classList.toggle("hidden", !offerKey);
       svNoImg.style.display = "flex";
@@ -1433,6 +1439,7 @@ require([
     }
 
     function svShowChecking() {
+      svStageState = "checking";
       svPlaceholder.textContent = "Checking Street View…";
       svPlaceholder.style.display = "flex";
       svNoImg.style.display = "none";
@@ -1442,6 +1449,7 @@ require([
     }
 
     function svShowPano() {
+      svStageState = "pano";
       svPlaceholder.style.display = "none";
       svNoImg.style.display = "none";
       svPanoDiv.style.visibility = "visible";
@@ -1788,7 +1796,7 @@ require([
     }
 
     function svSetDateBadge(raw) {
-      const text = raw ? svFormatImageDate(raw) : "";
+      const text = svStageState === "pano" && raw ? svFormatImageDate(raw) : "";
       if (!text) {
         // Never a placeholder date. No date, no badge.
         svDateBadge.style.display = "none";
@@ -1829,6 +1837,12 @@ require([
     function svRenderTimeline(data, currentPano) {
       const dates = svOtherDates(data);
       svTimelineChips.textContent = "";
+      if (svStageState !== "pano") {
+        // A service callback that outran an error or a close. The row belongs
+        // to a picture that is not on screen.
+        svTimelineRow.style.display = "none";
+        return;
+      }
       if (currentPano) {
         svMapsLink.href =
           "https://www.google.com/maps/@?api=1&map_action=pano&pano=" +
