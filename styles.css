@@ -1205,3 +1205,529 @@ body,
     margin: 0 0 3pt;
   }
 }
+
+/* ══════════════════════════════════════════════════════════════════════════
+   Mobile — the parcel you are standing on
+   ══════════════════════════════════════════════════════════════════════════
+
+   Every rule below is gated on `html.nrpc-mobile`, a class js/mobile.js adds
+   only when `(max-width: 768px), (pointer: coarse)` matches (or ?mobile=1
+   forces it). A plain media query would have been enough for the phone, but
+   the class is testable in a desktop browser and — more to the point — it
+   makes it impossible for any of this to reach the desktop layout by accident.
+
+   Touch targets are 44px minimum, which is Apple's HIG floor and the size at
+   which a thumb stops missing. */
+
+html.nrpc-mobile {
+  /* Real viewport height on phones: 100vh includes the collapsing URL bar and
+     leaves the sheet's bottom edge under it. dvh is the fix; the vh line is
+     the fallback for anything that predates it. */
+  --mb-vh: 100vh;
+}
+
+@supports (height: 100dvh) {
+  html.nrpc-mobile {
+    --mb-vh: 100dvh;
+  }
+}
+
+/* ── The report panel, as a bottom sheet ──────────────────────────────────
+   Same DOM as the desktop panel. Only the geometry changes: three stops up
+   from the bottom edge instead of a slide-in from the right. */
+
+html.nrpc-mobile #parcel-report-panel {
+  top: auto;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  width: 100%;
+  max-width: none;
+  height: calc(var(--mb-vh) * 0.58);
+  border-left: none;
+  border-top: 1px solid #ccc;
+  border-radius: 14px 14px 0 0;
+  box-shadow: 0 -3px 18px rgba(0, 0, 0, 0.2);
+  transform: translateY(calc(100% + 2px));
+  transition: transform 0.28s ease, height 0.28s ease;
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+  z-index: 400;
+}
+
+html.nrpc-mobile #parcel-report-panel.open {
+  /* Clamped at 0: the sheet is anchored to the bottom edge, so a drag upward
+     would only open a gap beneath it. Up-drags change the stop on release
+     instead. */
+  transform: translateY(max(0px, var(--mb-drag, 0px)));
+}
+
+html.nrpc-mobile #parcel-report-panel.mb-peek {
+  height: calc(var(--mb-vh) * 0.3);
+}
+
+html.nrpc-mobile #parcel-report-panel.mb-half {
+  height: calc(var(--mb-vh) * 0.58);
+}
+
+html.nrpc-mobile #parcel-report-panel.mb-full {
+  height: calc(var(--mb-vh) * 0.93);
+}
+
+html.nrpc-mobile #parcel-report-panel.mb-dragging {
+  transition: none;
+}
+
+/* The grip: the whole strip is the target, not just the 40px bar drawn in it. */
+#mb-grip {
+  display: none;
+}
+
+html.nrpc-mobile #mb-grip {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 26px;
+  flex-shrink: 0;
+  cursor: grab;
+  touch-action: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+html.nrpc-mobile #mb-grip .mb-grip-bar {
+  width: 40px;
+  height: 4px;
+  border-radius: 2px;
+  background: #c4c4c4;
+}
+
+html.nrpc-mobile #parcel-report-panel.mb-dragging #mb-grip {
+  cursor: grabbing;
+}
+
+html.nrpc-mobile #pr-header {
+  padding: 4px 12px 8px;
+}
+
+html.nrpc-mobile #pr-title {
+  font-size: 15px;
+}
+
+html.nrpc-mobile #pr-close {
+  font-size: 26px;
+  width: 44px;
+  height: 44px;
+  margin: -10px -10px -10px 0;
+}
+
+html.nrpc-mobile #pr-body {
+  padding: 0 14px 14px;
+  /* Momentum scroll inside the sheet, and the drag on the grip does not fight
+     the scroll because the grip sets touch-action: none. */
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+}
+
+/* The side tab has no job once the sheet has a grip. */
+html.nrpc-mobile #pr-tab {
+  display: none;
+}
+
+/* Bigger type and looser rows: this is read at arm's length in daylight. */
+html.nrpc-mobile .pr-table th,
+html.nrpc-mobile .pr-table td {
+  font-size: 13px;
+  padding: 7px 6px;
+}
+
+html.nrpc-mobile .pr-hint {
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+html.nrpc-mobile #pr-actions {
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+html.nrpc-mobile #pr-generate,
+html.nrpc-mobile #pr-export,
+html.nrpc-mobile #pr-key-save {
+  min-height: 44px;
+  font-size: 15px;
+  padding: 0 16px;
+}
+
+html.nrpc-mobile #pr-model {
+  min-height: 44px;
+  font-size: 15px;
+}
+
+html.nrpc-mobile #pr-key-input {
+  min-height: 44px;
+  font-size: 16px; /* below 16px iOS zooms the page on focus */
+}
+
+html.nrpc-mobile .pr-owner-toggle,
+html.nrpc-mobile #pr-footer {
+  font-size: 13px;
+}
+
+html.nrpc-mobile #pr-export-row {
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+html.nrpc-mobile .pr-export-note {
+  font-size: 12px;
+}
+
+html.nrpc-mobile #pr-report {
+  font-size: 14px;
+  line-height: 1.55;
+}
+
+html.nrpc-mobile .pr-opp {
+  padding: 10px 10px;
+}
+
+html.nrpc-mobile .pr-opp-desc {
+  font-size: 13px;
+}
+
+/* ── The locate bar ────────────────────────────────────────────────────────
+   Above the sheet's peek stop and clear of the home indicator. This is the
+   one control the whole mobile build exists for, so it is the biggest thing
+   on the screen that is not the map. */
+
+#mb-bar,
+#mb-fix,
+#mb-menu-btn,
+#mb-scrim,
+#mb-toast {
+  display: none;
+}
+
+html.nrpc-mobile #mb-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  position: fixed;
+  left: 12px;
+  right: 12px;
+  bottom: calc(12px + env(safe-area-inset-bottom, 0px));
+  z-index: 300;
+  pointer-events: none;
+}
+
+html.nrpc-mobile #mb-locate {
+  pointer-events: auto;
+  flex: 1;
+  min-height: 52px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  background: #0079c1;
+  color: #fff;
+  border: none;
+  border-radius: 26px;
+  font-family: inherit;
+  font-size: 16px;
+  font-weight: 600;
+  box-shadow: 0 3px 14px rgba(0, 0, 0, 0.28);
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+html.nrpc-mobile #mb-locate:active {
+  background: #005e96;
+}
+
+html.nrpc-mobile #mb-locate:disabled {
+  background: #7fb4d6;
+}
+
+html.nrpc-mobile .mb-locate-icon {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  border: 3px solid #fff;
+  box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.35);
+  flex-shrink: 0;
+}
+
+html.nrpc-mobile #mb-locate.mb-busy .mb-locate-icon {
+  animation: mb-pulse 1s ease-in-out infinite;
+}
+
+@keyframes mb-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.2);
+  }
+  50% {
+    box-shadow: 0 0 0 7px rgba(255, 255, 255, 0.45);
+  }
+}
+
+html.nrpc-mobile #mb-follow-wrap {
+  pointer-events: auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 44px;
+  padding: 0 12px;
+  background: rgba(255, 255, 255, 0.96);
+  border-radius: 22px;
+  box-shadow: 0 3px 14px rgba(0, 0, 0, 0.22);
+  font-size: 13px;
+  color: #323232;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+html.nrpc-mobile #mb-follow {
+  width: 20px;
+  height: 20px;
+  margin: 0;
+}
+
+/* The fix itself, stated in words. A blue dot on a grey basemap is not enough
+   to tell someone whether the answer they are about to read is trustworthy —
+   the accuracy radius is. */
+html.nrpc-mobile #mb-fix {
+  display: block;
+  position: fixed;
+  left: 12px;
+  right: 12px;
+  bottom: calc(74px + env(safe-area-inset-bottom, 0px));
+  z-index: 300;
+  padding: 7px 12px;
+  background: rgba(255, 255, 255, 0.95);
+  border-radius: 8px;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.18);
+  font-size: 12px;
+  color: #444;
+  text-align: center;
+}
+
+html.nrpc-mobile #mb-fix.mb-fix-rough {
+  background: rgba(255, 249, 230, 0.97);
+  color: #7a5a00;
+}
+
+html.nrpc-mobile #mb-fix.hidden {
+  display: none;
+}
+
+/* When the sheet is up, the bar and the fix line ride above it. */
+html.nrpc-mobile #parcel-report-panel.open ~ #mb-bar,
+html.nrpc-mobile #parcel-report-panel.open ~ #mb-fix {
+  display: none;
+}
+
+/* ── Messages ─────────────────────────────────────────────────────────────
+   Every geolocation failure lands here in plain language. Never an alert():
+   a modal dialog in the field is a dead end, and this has to stay readable
+   while the map behind it is still usable. */
+
+html.nrpc-mobile #mb-toast {
+  display: block;
+  position: fixed;
+  left: 12px;
+  right: 12px;
+  top: calc(12px + env(safe-area-inset-top, 0px));
+  z-index: 600;
+  padding: 12px 14px;
+  border-radius: 10px;
+  background: #323232;
+  color: #fff;
+  font-size: 14px;
+  line-height: 1.45;
+  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.3);
+}
+
+html.nrpc-mobile #mb-toast.mb-warn {
+  background: #8a4b00;
+}
+
+html.nrpc-mobile #mb-toast.hidden {
+  display: none;
+}
+
+/* ── The desktop toolbar, collapsed into one menu ─────────────────────────
+   The toolbar is eight controls wide and does not fit a 390px screen. On
+   mobile it becomes a drawer behind a single button; nothing is removed. */
+
+html.nrpc-mobile #mb-menu-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  position: fixed;
+  top: calc(12px + env(safe-area-inset-top, 0px));
+  left: 12px;
+  z-index: 500;
+  width: 46px;
+  height: 46px;
+  border: none;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.97);
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.25);
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+html.nrpc-mobile #mb-menu-btn span {
+  display: block;
+  width: 20px;
+  height: 2px;
+  border-radius: 1px;
+  background: #323232;
+  transition: transform 0.2s ease, opacity 0.2s ease;
+}
+
+html.nrpc-mobile #mb-menu-btn.open span:nth-child(1) {
+  transform: translateY(6px) rotate(45deg);
+}
+
+html.nrpc-mobile #mb-menu-btn.open span:nth-child(2) {
+  opacity: 0;
+}
+
+html.nrpc-mobile #mb-menu-btn.open span:nth-child(3) {
+  transform: translateY(-6px) rotate(-45deg);
+}
+
+html.nrpc-mobile #mb-scrim {
+  display: block;
+  position: fixed;
+  inset: 0;
+  z-index: 450;
+  background: rgba(0, 0, 0, 0.3);
+}
+
+html.nrpc-mobile #mb-scrim.hidden {
+  display: none;
+}
+
+html.nrpc-mobile #toggle-bar {
+  position: fixed;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 470;
+  width: 250px;
+  max-width: 78vw;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
+  padding: calc(70px + env(safe-area-inset-top, 0px)) 12px
+    calc(16px + env(safe-area-inset-bottom, 0px));
+  border-radius: 0;
+  overflow-y: auto;
+  transform: translateX(-102%);
+  transition: transform 0.25s ease;
+  box-shadow: 4px 0 18px rgba(0, 0, 0, 0.22);
+}
+
+html.nrpc-mobile.mb-menu-open #toggle-bar {
+  transform: translateX(0);
+}
+
+html.nrpc-mobile #toggle-bar .panel-toggle,
+html.nrpc-mobile #toggle-bar button {
+  min-height: 44px;
+  width: 100%;
+  text-align: left;
+  font-size: 15px;
+}
+
+html.nrpc-mobile #toggle-bar > div,
+html.nrpc-mobile #toggle-bar > label {
+  width: 100%;
+}
+
+html.nrpc-mobile #home-container {
+  width: 100%;
+}
+
+html.nrpc-mobile #home-container .esri-home {
+  width: 100%;
+  min-height: 44px;
+}
+
+html.nrpc-mobile #mb-parcel-layer-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  padding: 0 4px;
+  font-size: 14px;
+  color: #323232;
+  border-top: 1px solid #e6e6e6;
+  margin-top: 4px;
+  cursor: pointer;
+}
+
+html.nrpc-mobile #mb-parcel-layer {
+  width: 20px;
+  height: 20px;
+  margin: 0;
+}
+
+/* The stacked panels (legend, layers) are 300px boxes pinned under the
+   toolbar. On a phone they get the width they need and stop short of the
+   locate bar. */
+html.nrpc-mobile #panels-container {
+  top: calc(66px + env(safe-area-inset-top, 0px));
+  left: 8px;
+  right: 8px;
+  z-index: 440;
+}
+
+html.nrpc-mobile .panel {
+  width: auto;
+  max-width: none;
+  height: min(46vh, 340px);
+}
+
+html.nrpc-mobile #contribute-wrapper {
+  height: min(60vh, 480px);
+  width: auto;
+}
+
+/* Esri's own widgets: the zoom/home buttons are 32px, below the touch floor. */
+html.nrpc-mobile .esri-ui-corner .esri-component .esri-widget--button {
+  width: 44px;
+  height: 44px;
+}
+
+html.nrpc-mobile .esri-ui-top-right {
+  padding-top: env(safe-area-inset-top, 0px);
+}
+
+/* The dropdowns main.js pins to the body are positioned in JS against a
+   toolbar button; inside the drawer they must not run off a 390px screen. */
+html.nrpc-mobile #basemap-dropdown,
+html.nrpc-mobile #city-dropdown-list,
+html.nrpc-mobile #clip-zip-dropdown {
+  z-index: 480;
+  max-width: calc(100vw - 24px);
+}
+
+/* Printing from the sheet: the print stylesheet already hides everything
+   except #pr-print, and these elements are body children, so they go with it.
+   Named anyway, because "Export as PDF has to keep working on a phone" is the
+   requirement and a silent dependency is not a guarantee. */
+@media print {
+  body.pr-print-ready #mb-bar,
+  body.pr-print-ready #mb-fix,
+  body.pr-print-ready #mb-toast,
+  body.pr-print-ready #mb-menu-btn,
+  body.pr-print-ready #mb-scrim {
+    display: none !important;
+  }
+}

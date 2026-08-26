@@ -3,7 +3,12 @@
 
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="initial-scale=1,maximum-scale=1,user-scalable=no">
+  <!-- width=device-width is what makes a phone lay the page out at its own
+       width instead of the 980px desktop default it otherwise assumes.
+       viewport-fit=cover puts the map under the notch; the mobile CSS pays it
+       back with env(safe-area-inset-*) on every fixed control. -->
+  <meta name="viewport"
+    content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
   <title>NRPC Interactive Map</title>
 
   <!-- ArcGIS Styles -->
@@ -24,6 +29,9 @@
   <script src="js/shp-writer.js"></script>
   <script src="js/export-utils.js"></script>
   <script src="js/parcel-report.js"></script>
+  <!-- Mobile only defines window.NRPCMobile; parcel-report.js calls into it at
+       the end of init(), and it returns immediately on a desktop. -->
+  <script src="js/mobile.js"></script>
   <script src="js/main.js"></script>
 </body>
 

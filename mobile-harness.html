@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="utf-8">
+  <title>NRPC map — phone harness</title>
+  <!--
+    A phone-sized viewport on a desktop, without Chrome's device emulation.
+
+    The app is loaded in a 390x844 iframe (iPhone 14 CSS pixels). A media query
+    inside an iframe is evaluated against the IFRAME's viewport, so
+    `(max-width: 768px)` matches in here exactly as it does on a phone, and
+    js/mobile.js switches itself on for real rather than being forced.
+    `?mobile=1` is passed anyway so the harness is honest about which gate it
+    is testing, and so the same URL works if the frame is ever widened.
+
+    Two things this canNOT test, and a real phone must:
+      - a real GPS fix (here, navigator.geolocation is mocked from the console)
+      - touch: pointer events fire, but not with a finger's imprecision.
+  -->
+  <style>
+    html, body {
+      margin: 0;
+      height: 100%;
+      background: #2b2b2b;
+      font: 13px/1.5 "Avenir Next", "Helvetica Neue", Helvetica, Arial, sans-serif;
+      color: #ddd;
+    }
+
+    .wrap {
+      display: flex;
+      gap: 24px;
+      align-items: flex-start;
+      padding: 20px;
+    }
+
+    .phone {
+      width: 390px;
+      height: 844px;
+      border: 12px solid #111;
+      border-radius: 42px;
+      overflow: hidden;
+      box-shadow: 0 10px 40px rgba(0, 0, 0, 0.6);
+      background: #fff;
+      flex-shrink: 0;
+    }
+
+    iframe {
+      width: 390px;
+      height: 844px;
+      border: 0;
+      display: block;
+    }
+
+    .notes {
+      max-width: 420px;
+    }
+
+    h1 { font-size: 15px; margin: 4px 0 10px; color: #fff; }
+    code { background: #1b1b1b; padding: 1px 5px; border-radius: 3px; color: #9cdcfe; }
+    pre { background: #1b1b1b; padding: 10px; border-radius: 6px; overflow-x: auto; font-size: 12px; }
+    p { margin: 0 0 10px; }
+  </style>
+</head>
+
+<body>
+  <div class="wrap">
+    <div class="phone">
+      <iframe id="app" src="index.html?mobile=1" title="NRPC map, phone viewport"></iframe>
+    </div>
+    <div class="notes">
+      <h1>Phone harness — 390 × 844</h1>
+      <p>The frame is an iPhone 14 viewport. Media queries inside it match a phone's,
+        so <code>js/mobile.js</code> turns itself on the same way it does on a device.</p>
+      <p>Geolocation is a secure-context API: over <code>http://localhost</code> it works,
+        over <code>http://&lt;LAN-IP&gt;</code> it does not. For a real device use
+        <code>./serve-mobile.sh</code>.</p>
+      <p>To drive it without touching the browser's permission dialog, mock the API in
+        the frame from the DevTools console:</p>
+      <pre>const w = document.getElementById('app').contentWindow;
+w.navigator.geolocation = {
+  getCurrentPosition: (ok) => ok({
+    coords: { latitude: 45.10519, longitude: -93.28234, accuracy: 12 },
+    timestamp: Date.now()
+  }),
+  watchPosition: () => 1,
+  clearWatch: () => {}
+};</pre>
+      <p>Then tap <strong>Use my location</strong>. Two parcels worth testing:
+        <code>45.10519, -93.28234</code> (Brooklyn Park) and the Golden Valley parcel
+        <code>1802924440108</code>.</p>
+    </div>
+  </div>
+</body>
+
+</html>

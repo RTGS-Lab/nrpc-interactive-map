@@ -2064,6 +2064,9 @@
     let facts = null;
     let busy = false;
     let abortCtl = null;
+    // Date.now() at the moment the current selection started. Set by
+    // beginLoad(), read by selectParcelFeature() for the total stage timing.
+    let loadStart = 0;
     // The finished report: its Markdown, the HTML we rendered from it, when it
     // finished, and which model wrote it. Null until one completes — which is
     // exactly the condition the export button appears under.
@@ -2165,7 +2168,11 @@
       document.body.classList.remove("pr-print-ready");
     }
 
-    async function loadParcel(lon, lat) {
+    /**
+     * Clear the panel back to "loading" and start the clock. Every selection
+     * begins here, whichever path asked for it.
+     */
+    function beginLoad() {
       if (abortCtl) abortCtl.abort();
       facts = null;
       clearReport();
@@ -2177,28 +2184,43 @@
       openPanel();
       highlightLayer.removeAll();
 
-      const loadStart = Date.now();
+      loadStart = Date.now();
       resetTimings(loadStart);
+      return loadStart;
+    }
 
+    /**
+     * Everything downstream of "we are holding the parcel feature": outline it,
+     * assemble the facts, render them. This is the seam the two selection paths
+     * meet at — the desktop map click and the mobile "use my location" tap —
+     * so neither can drift from the other. Call beginLoad() first.
+     */
+    async function selectParcelFeature(feature, lon, lat) {
+      if (!feature) {
+        hint.textContent = "No Hennepin County parcel at that point.";
+        return null;
+      }
+      if (feature.geometry) {
+        highlightLayer.add(
+          new Graphic({
+            geometry: { type: "polygon", rings: feature.geometry.rings, spatialReference: { wkid: 4326 } },
+            symbol: HIGHLIGHT_SYMBOL,
+          })
+        );
+      }
+      facts = await assembleFacts(feature, lon, lat);
+      stageTimings.total = { startedAt: 0, ms: Date.now() - loadStart };
+      stageTimings.pid = facts && facts.identity ? facts.identity.pid : null;
+      showFacts(facts);
+      setStatus("");
+      return facts;
+    }
+
+    async function loadParcel(lon, lat) {
+      beginLoad();
       try {
         const feature = await timed("parcel", () => fetchParcelAt(lon, lat));
-        if (!feature) {
-          hint.textContent = "No Hennepin County parcel at that point.";
-          return;
-        }
-        if (feature.geometry) {
-          highlightLayer.add(
-            new Graphic({
-              geometry: { type: "polygon", rings: feature.geometry.rings, spatialReference: { wkid: 4326 } },
-              symbol: HIGHLIGHT_SYMBOL,
-            })
-          );
-        }
-        facts = await assembleFacts(feature, lon, lat);
-        stageTimings.total = { startedAt: 0, ms: Date.now() - loadStart };
-        stageTimings.pid = facts && facts.identity ? facts.identity.pid : null;
-        showFacts(facts);
-        setStatus("");
+        await selectParcelFeature(feature, lon, lat);
       } catch (e) {
         hint.textContent = `Could not load the parcel: ${e.message}`;
       }
@@ -2332,6 +2354,45 @@
     };
 
     updateFooter();
+
+    // The surface a companion module drives the panel through. Everything here
+    // is already used internally by the desktop path; nothing is mobile-only.
+    const api = {
+      view,
+      Graphic,
+      GraphicsLayer,
+      beginLoad,
+      selectParcelFeature,
+      loadParcel,
+      // Wrapped in the same stage timer the desktop path uses, so a mobile
+      // selection shows up in dev.timings with a `parcel` stage like any other.
+      fetchParcelAt: (lon, lat) => timed("parcel", () => fetchParcelAt(lon, lat)),
+      openPanel,
+      closePanel,
+      isOpen: () => panel.classList.contains("open"),
+      panel,
+      body,
+      header,
+      tab,
+      setHint: text => {
+        hint.textContent = text;
+        hint.classList.remove("hidden");
+      },
+      hasFacts: () => !!facts,
+      onExport: fn => exportBtn.addEventListener("click", fn),
+    };
+    window.NRPCParcelReport.api = api;
+
+    // Hand off to the mobile layer, if it is present and this is a phone. It
+    // decides for itself whether to do anything; on a desktop it returns
+    // immediately and the app is unchanged.
+    if (window.NRPCMobile && typeof window.NRPCMobile.init === "function") {
+      try {
+        window.NRPCMobile.init(api);
+      } catch (e) {
+        console.warn("[mobile] init failed, desktop behaviour retained:", e);
+      }
+    }
   }
 
   window.NRPCParcelReport = { init };
