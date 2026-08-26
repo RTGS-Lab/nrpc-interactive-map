@@ -281,9 +281,111 @@ require([
     clipExportBtn.disabled = true;
     clipFormContents.appendChild(clipExportBtn);
 
-    toggleBar.appendChild(clipZipWrapper);
+    // ── The toolbar, rationalised ────────────────────────────────────────────
+    //
+    // Before: home · Legend · Layers · Contribute · Basemap · Zoom to... ·
+    // Clip & Zip — six equal buttons in one row, every one of them a top-level
+    // choice, and nothing telling you which is the one you want. Bryan's note
+    // after the walkthrough: "rationalize the top menu so it manages cognitive
+    // load better."
+    //
+    // After: search · Map ▾ · Zoom to... ▾ · Tools ▾ — one field and three
+    // groups. See outputs/menu-rationale.md for what moved and why.
+    //
+    // The grouped controls are the SAME elements with the SAME ids and the
+    // SAME handlers; they are only reparented into a second row that opens
+    // under the group button. A second row rather than a floating menu is a
+    // deliberate choice: Basemap, Zoom to... and Clip & Zip each open their own
+    // floating dropdown positioned from their button's rect, and a floating
+    // menu inside a floating menu would either mis-position them (the button
+    // is gone by the time the dropdown measures it) or stack two panels — the
+    // bug this is meant to fix. In a row the buttons stay on screen, so the
+    // dropdowns land exactly where they always did.
 
-    view.ui.add(toggleBar, { position: "top-left", index: 0 });
+    const tbPrimary = document.createElement("div");
+    tbPrimary.id = "tb-primary";
+    tbPrimary.className = "tb-row";
+
+    // Search is first and always visible: it is the most frequent way in, and
+    // the only control that answers "take me to the thing I already know".
+    const tbSearchWrap = document.createElement("div");
+    tbSearchWrap.id = "tb-search-wrap";
+
+    const tbSearch = document.createElement("input");
+    tbSearch.id = "tb-search";
+    tbSearch.type = "search";
+    tbSearch.autocomplete = "off";
+    tbSearch.spellcheck = false;
+    tbSearch.placeholder = "Search PID, address, city, watershed";
+    tbSearch.setAttribute("aria-label", "Search parcels, cities and watersheds");
+
+    const tbSearchClear = document.createElement("button");
+    tbSearchClear.id = "tb-search-clear";
+    tbSearchClear.type = "button";
+    tbSearchClear.textContent = "×";
+    tbSearchClear.title = "Clear";
+    tbSearchClear.classList.add("hidden");
+
+    tbSearchWrap.append(tbSearch, tbSearchClear);
+
+    const groupMapBtn = document.createElement("button");
+    groupMapBtn.id = "group-map";
+    groupMapBtn.className = "panel-toggle tb-group-btn";
+    groupMapBtn.textContent = "Map";
+    groupMapBtn.title = "Layers, legend and basemap";
+
+    const groupToolsBtn = document.createElement("button");
+    groupToolsBtn.id = "group-tools";
+    groupToolsBtn.className = "panel-toggle tb-group-btn";
+    groupToolsBtn.textContent = "Tools";
+    groupToolsBtn.title = "Export, contribute, Street View";
+
+    // "Zoom to..." keeps its own button and its own list — it is its own group
+    // — but it should read as one of the three, so it gets the same caret.
+    cityDropdownBtn.classList.add("tb-caret");
+
+    tbPrimary.append(homeContainer, tbSearchWrap, groupMapBtn, cityDropdownWrapper, groupToolsBtn);
+
+    // Map: what you are looking at. Used occasionally, and never in a hurry.
+    const groupMapRow = document.createElement("div");
+    groupMapRow.id = "tb-group-map";
+    groupMapRow.className = "tb-row tb-group-row hidden";
+    groupMapRow.append(layersToggle, legendToggle, basemapWrapper);
+
+    // Tools: things with a side effect — a file on disk, an edit to a shared
+    // layer, a call to Google. Used rarely, and deliberately.
+    const groupToolsRow = document.createElement("div");
+    groupToolsRow.id = "tb-group-tools";
+    groupToolsRow.className = "tb-row tb-group-row hidden";
+    groupToolsRow.append(clipZipWrapper, contributeToggle);
+
+    toggleBar.replaceChildren(tbPrimary, groupMapRow, groupToolsRow);
+
+    // Out of `.esri-ui` and onto <body>.
+    //
+    // MERGE NOTE (integrate). `view.ui.add()` parents the toolbar inside
+    // `.esri-ui`, and `.esri-ui` carries `z-index: 0` — its own stacking
+    // context. Every z-index inside it is therefore relative to 0, and no
+    // number can lift the toolbar above the `position: fixed` report and
+    // Street View panels at z-index 150 on <body>. On the branches separately
+    // this never showed; merged, the toolbar is wider and the panorama is
+    // offset left to make room for the report, and they overlap. Hit-tested at
+    // 1356x693 before the fix: elementFromPoint over "Zoom to..." and over
+    // "Street View" both returned #street-view-header, i.e. genuinely
+    // unclickable. The fix is the right parent, not a bigger number — the same
+    // lesson js/mobile.js already wrote down for the drawer. Positioning is
+    // restored in CSS at the exact rect view.ui gave it (15, 15), so the
+    // dropdowns positioned from button rects do not move.
+    document.body.appendChild(toggleBar);
+    document.documentElement.classList.add("nrpc-toolbar-body");
+
+    // The results list. On <body> for the same stacking reason, and positioned
+    // under the field when it opens.
+    const tbResults = document.createElement("div");
+    tbResults.id = "tb-search-results";
+    tbResults.className = "hidden";
+    tbResults.setAttribute("role", "listbox");
+    document.body.appendChild(tbResults);
 
     // ── Panel stack container ─────────────────────────────────────────────────
     const panelsContainer = document.createElement("div");
@@ -612,6 +714,26 @@ require([
       });
     }
 
+    /**
+     * Move the view to an extent, animated when anyone can see it.
+     *
+     * A goTo animation is driven by requestAnimationFrame, and a HIDDEN tab
+     * does not run one: the promise never settles and the map never moves.
+     * That is exactly what a shared "?city=" or "?watershed=" link opened in a
+     * background tab does — measured here: goTo still pending past 45 s with
+     * document.hidden true. So a hidden tab jumps, and the animation is kept
+     * for the case it can actually be watched.
+     */
+    function goToExtent(extent) {
+      if (document.hidden) {
+        view.extent = extent;
+        return Promise.resolve();
+      }
+      return view.goTo(extent).catch(() => {
+        /* the user interrupted the animation — they win */
+      });
+    }
+
     function selectFullCounty() {
       fullCountySelected = true;
       // Uncheck all individual cities (not the Full County checkbox itself)
@@ -766,7 +888,7 @@ require([
 
       cityZoomBtn.addEventListener("click", () => {
         if (fullCountySelected && countyGeometryCache) {
-          view.goTo(countyGeometryCache.extent.expand(1.1));
+          goToExtent(countyGeometryCache.extent.expand(1.1));
           cityDropdownList.classList.add("hidden");
           cityDropdownBtn.classList.remove("active");
           return;
@@ -798,7 +920,7 @@ require([
           for (let i = 1; i < features.length; i++) {
             extent = extent.union(features[i].geometry.extent);
           }
-          view.goTo(extent.expand(1.5));
+          goToExtent(extent.expand(1.5));
           cityDropdownList.classList.add("hidden");
           cityDropdownBtn.classList.remove("active");
         });
@@ -2223,7 +2345,9 @@ require([
     svToggle.className = "panel-toggle";
     svToggle.textContent = "Street View";
     svToggle.title = "Click the map to look around from there";
-    toggleBar.appendChild(svToggle);
+    // Tools, not the top row: it calls out to Google and it changes what a map
+    // click does. Both are side effects, which is what Tools means here.
+    groupToolsRow.appendChild(svToggle);
 
     function svSetPickMode(on) {
       svPickMode = !!on;
@@ -2296,29 +2420,6 @@ require([
       });
     }
 
-    // ── The toolbar has to outrank the panels ─────────────────────────────
-    //
-    // MERGE NOTE (integrate). `view.ui.add()` parents the toolbar inside
-    // `.esri-ui`, and `.esri-ui` carries `z-index: 0` — its own stacking
-    // context. Every z-index inside it is therefore relative to 0, and no
-    // number can lift the toolbar above the two `position: fixed` panels at
-    // z-index 150 on <body>. On the branches separately this never showed:
-    // the report panel is 400px on the right edge, clear of a 580px toolbar,
-    // and Street View's panel started at 50vw. Merged, the toolbar gained a
-    // button (656px wide) and the panorama is offset left to make room for the
-    // report — and the two overlap. Hit-tested with elementFromPoint at
-    // 1356×693: "Zoom to..." and "Street View" both returned
-    // #street-view-header, i.e. genuinely unclickable.
-    //
-    // The fix is the right parent, not a bigger number — the same lesson
-    // js/mobile.js already wrote down for the drawer. On <body> the toolbar's
-    // z-index means what it says. Positioning is restored in CSS at the exact
-    // rect view.ui gave it (15, 15), so the dropdowns that main.js positions
-    // from button rects are unaffected. mobile.js reparents it too; whichever
-    // runs first, the other is a no-op.
-    document.body.appendChild(toggleBar);
-    document.documentElement.classList.add("nrpc-toolbar-body");
-
     // The surface the rest of the app drives Street View through — the mobile
     // layer needs it to make the panorama one of its managed surfaces.
     window.NRPCStreetView = {
@@ -2339,6 +2440,441 @@ require([
         console.warn("[street-view] mobile registration failed:", e);
       }
     }
+
+    // ── One panel at a time ──────────────────────────────────────────────────
+    //
+    // The three floating dropdowns — Basemap, Zoom to..., Clip & Zip — are
+    // each positioned from their button's rect and each opened by their own
+    // handler, and nothing ever closed the other two. Two of them open at once
+    // land on top of each other (docs/map-test-report.md). One routine now
+    // owns "what else must close", and every opener goes through it.
+    //
+    // The mechanism is mobile.js's: watch the class rather than reimplement
+    // six open/close handlers that would drift. Which means mobile.js's rule
+    // applies here too — a classList write that changes nothing still queues a
+    // MutationRecord, so observers that close each other wake each other
+    // forever. Every write below goes through setHidden(), which writes only
+    // on a real change.
+
+    const FLOATING = [
+      [basemapDropdown, basemapBtn],
+      [cityDropdownList, cityDropdownBtn],
+      [clipZipDropdown, clipZipBtn],
+    ];
+
+    function setHidden(node, on) {
+      if (!node) return false;
+      if (node.classList.contains("hidden") === !!on) return false;
+      node.classList.toggle("hidden", !!on);
+      return true;
+    }
+
+    function setActive(node, on) {
+      if (!node) return false;
+      if (node.classList.contains("active") === !!on) return false;
+      node.classList.toggle("active", !!on);
+      return true;
+    }
+
+    function closeFloating(except) {
+      FLOATING.forEach(([wrap, btn]) => {
+        if (wrap === except) return;
+        setHidden(wrap, true);
+        setActive(btn, false);
+      });
+    }
+
+    FLOATING.forEach(([wrap]) => {
+      new MutationObserver(() => {
+        if (wrap.classList.contains("hidden")) return;
+        closeFloating(wrap);
+        closeResults();
+      }).observe(wrap, { attributes: true, attributeFilter: ["class"] });
+    });
+
+    // ── The groups ───────────────────────────────────────────────────────────
+
+    const GROUPS = [
+      [groupMapBtn, groupMapRow],
+      [groupToolsBtn, groupToolsRow],
+    ];
+
+    function setGroup(row) {
+      GROUPS.forEach(([btn, r]) => {
+        const on = r === row;
+        setHidden(r, !on);
+        setActive(btn, on);
+      });
+      // A group opening puts a row of buttons where a dropdown was measured
+      // from, so anything floating has to go with it.
+      if (row) closeFloating(null);
+      closeResults();
+    }
+
+    GROUPS.forEach(([btn, row]) => {
+      btn.addEventListener("click", e => {
+        e.stopPropagation();
+        setGroup(row.classList.contains("hidden") ? row : null);
+      });
+    });
+
+    /**
+     * A dot on the group button when something inside it is switched on.
+     *
+     * Grouping hides state as well as controls: the app opens with the layer
+     * list showing and "Layers" marked active, and that mark is now inside a
+     * collapsed row. The dot puts the fact back on the surface — "there is
+     * something on in here" — without putting the button back.
+     */
+    function syncGroupBadges() {
+      GROUPS.forEach(([btn, row]) => {
+        const on = !!row.querySelector(".panel-toggle.active, .tb-group-child.active");
+        setClassOn(btn, "tb-has-active", on);
+      });
+    }
+
+    function setClassOn(node, name, on) {
+      if (!node || node.classList.contains(name) === !!on) return false;
+      node.classList.toggle(name, !!on);
+      return true;
+    }
+
+    GROUPS.forEach(([, row]) => {
+      new MutationObserver(syncGroupBadges).observe(row, {
+        attributes: true,
+        attributeFilter: ["class"],
+        subtree: true,
+      });
+    });
+    syncGroupBadges();
+
+    // ── Search ───────────────────────────────────────────────────────────────
+    //
+    // One field, four kinds of answer, grouped by kind:
+    //
+    //   PID        digits (dashes and spaces allowed) → the parcel layer
+    //   Address    text, or "224 83rd" → the same layer, by HOUSE_NO + STREET_NM
+    //   City       the 46 names Zoom to... already holds — local, instant
+    //   Watershed  the 13 names Zoom to... already holds — local, instant
+    //
+    // A parcel result goes through NRPCParcelReport.api.selectByPid(), which
+    // ends in the same selectParcelFeature() a map click and a phone fix end
+    // in. A city or watershed result *drives the Zoom to... control* —
+    // it checks that entry's checkbox and clicks the existing zoom button —
+    // rather than doing its own goTo. That is the whole point: the two
+    // controls can never disagree about what is selected, because there is
+    // only one selection.
+
+    const prApiSearch = window.NRPCParcelReport && window.NRPCParcelReport.api;
+
+    let searchSeq = 0;
+    let searchCtl = null;
+    let searchTimer = null;
+    let activeIndex = -1;
+    let rows = []; // [{ kind, label, sub, run }]
+
+    const isOpenResults = () => !tbResults.classList.contains("hidden");
+
+    function closeResults() {
+      setHidden(tbResults, true);
+      activeIndex = -1;
+    }
+
+    function positionResults() {
+      const r = tbSearchWrap.getBoundingClientRect();
+      tbResults.style.top = `${Math.round(r.bottom + 4)}px`;
+      tbResults.style.left = `${Math.round(r.left)}px`;
+      tbResults.style.minWidth = `${Math.round(r.width)}px`;
+    }
+
+    /** The city / watershed checkboxes Zoom to... built, read live. */
+    function zoomEntries() {
+      return [...cityDropdownList.querySelectorAll("input[data-type]")].map(cb => ({
+        cb,
+        kind: cb.dataset.type === "watershed" ? "Watershed" : "City",
+        name: cb.value,
+        label: (cb.labels && cb.labels[0] && cb.labels[0].textContent) || cb.value,
+      }));
+    }
+
+    /**
+     * Select one Zoom to... entry and run its zoom, through the control's own
+     * checkbox and its own button. Nothing here re-implements the zoom: the
+     * dropdown's label, the highlight, and the Clip & Zip geometry all update
+     * because the checkbox's own change handler ran.
+     */
+    function zoomToEntry(entry) {
+      zoomEntries().forEach(e => {
+        if (e.cb.checked && e.cb !== entry.cb) {
+          e.cb.checked = false;
+          e.cb.dispatchEvent(new Event("change", { bubbles: true }));
+        }
+      });
+      const county = document.getElementById("city-cb-full-county");
+      if (county && county.checked) {
+        county.checked = false;
+        county.dispatchEvent(new Event("change", { bubbles: true }));
+      }
+      if (!entry.cb.checked) {
+        entry.cb.checked = true;
+        entry.cb.dispatchEvent(new Event("change", { bubbles: true }));
+      }
+      cityZoomBtn.click();
+    }
+
+    function renderRows(newRows, note) {
+      rows = newRows;
+      activeIndex = -1;
+      tbResults.replaceChildren();
+      if (note) {
+        const n = document.createElement("div");
+        n.className = "tb-result-note";
+        n.textContent = note;
+        tbResults.append(n);
+      }
+      let lastKind = null;
+      rows.forEach((row, i) => {
+        if (row.kind !== lastKind) {
+          const h = document.createElement("div");
+          h.className = "tb-result-kind";
+          h.textContent = row.kind;
+          tbResults.append(h);
+          lastKind = row.kind;
+        }
+        const b = document.createElement("button");
+        b.type = "button";
+        b.className = "tb-result";
+        b.dataset.index = String(i);
+        b.setAttribute("role", "option");
+        const main = document.createElement("span");
+        main.className = "tb-result-main";
+        main.textContent = row.label;
+        b.append(main);
+        if (row.sub) {
+          const sub = document.createElement("span");
+          sub.className = "tb-result-sub";
+          sub.textContent = row.sub;
+          b.append(sub);
+        }
+        b.addEventListener("click", () => choose(i));
+        tbResults.append(b);
+      });
+      if (!rows.length && !note) closeResults();
+      else {
+        positionResults();
+        setHidden(tbResults, false);
+      }
+    }
+
+    function highlight(i) {
+      const buttons = [...tbResults.querySelectorAll(".tb-result")];
+      buttons.forEach(b => b.classList.remove("active"));
+      if (i < 0 || i >= buttons.length) {
+        activeIndex = -1;
+        return;
+      }
+      activeIndex = i;
+      buttons[i].classList.add("active");
+      buttons[i].scrollIntoView({ block: "nearest" });
+    }
+
+    function choose(i) {
+      const row = rows[i];
+      if (!row) return;
+      closeResults();
+      tbSearch.blur();
+      row.run();
+    }
+
+    async function runSearch(raw) {
+      const q = raw.trim();
+      const seq = ++searchSeq;
+      if (searchCtl) searchCtl.abort();
+      if (q.length < 2) {
+        closeResults();
+        return;
+      }
+      searchCtl = new AbortController();
+      const signal = searchCtl.signal;
+
+      // Local matches first, and instantly — they need no network at all.
+      const needle = q.toUpperCase();
+      const local = zoomEntries()
+        .filter(e => e.label.toUpperCase().includes(needle) || e.name.toUpperCase().includes(needle))
+        .slice(0, 8)
+        .map(e => ({
+          kind: e.kind,
+          label: e.label,
+          sub: e.kind === "Watershed" ? "watershed district" : "city or township",
+          run: () => zoomToEntry(e),
+        }));
+
+      const digits = q.replace(/[^0-9]/g, "");
+      // "224 83rd" is an address, not a PID: a PID query is digits and
+      // separators only. 13 digits is a whole PID.
+      const looksLikePid = /^[0-9\s-]+$/.test(q) && digits.length >= 4;
+
+      if (local.length) renderRows(local, null);
+
+      if (!prApiSearch) {
+        if (!local.length) renderRows([], "Parcel search is unavailable — the report module did not load.");
+        return;
+      }
+
+      let parcels = [];
+      try {
+        parcels = looksLikePid
+          ? await prApiSearch.search.byPid(digits, signal)
+          : await prApiSearch.search.byAddress(q, signal);
+      } catch (e) {
+        if (e.name === "AbortError") return; // a later keystroke owns the field
+        if (seq !== searchSeq) return;
+        renderRows(local, "Parcel search failed: " + e.message);
+        return;
+      }
+      if (seq !== searchSeq) return; // superseded while in flight
+
+      const parcelRows = parcels.map(r => ({
+        kind: looksLikePid ? "PID" : "Address",
+        label: looksLikePid ? r.pid : r.address || r.pid,
+        sub: looksLikePid
+          ? [r.address, r.city].filter(Boolean).join(", ") || "no street address on the record"
+          : [r.city, "PID " + r.pid].filter(Boolean).join(" · "),
+        run: () => prApiSearch.selectByPid(r.pid),
+      }));
+
+      // Cities and watersheds first when they match. They are the coarser and
+      // rarer answer — someone typing "brookl" wants Brooklyn Park, not the
+      // ten Brooklyn Blvd addresses that sort above it alphabetically — and a
+      // PID or a house number never matches them, so nothing is displaced when
+      // the query really is a parcel.
+      const all = [...local, ...parcelRows];
+      renderRows(all, all.length ? null : "Nothing matched “" + q + "”.");
+    }
+
+    tbSearch.addEventListener("input", () => {
+      setHidden(tbSearchClear, !tbSearch.value);
+      clearTimeout(searchTimer);
+      const v = tbSearch.value;
+      // 250 ms: long enough that typing a 13-digit PID is one query, short
+      // enough that it feels like the list is keeping up.
+      searchTimer = setTimeout(() => runSearch(v), 250);
+    });
+
+    tbSearch.addEventListener("focus", () => {
+      if (rows.length) {
+        positionResults();
+        setHidden(tbResults, false);
+      }
+    });
+
+    tbSearch.addEventListener("keydown", e => {
+      if (e.key === "Escape") {
+        closeResults();
+        tbSearch.blur();
+        return;
+      }
+      if (!isOpenResults()) {
+        if (e.key === "Enter") {
+          clearTimeout(searchTimer);
+          runSearch(tbSearch.value);
+          e.preventDefault();
+        }
+        return;
+      }
+      const n = tbResults.querySelectorAll(".tb-result").length;
+      if (e.key === "ArrowDown") {
+        highlight(activeIndex + 1 >= n ? 0 : activeIndex + 1);
+        e.preventDefault();
+      } else if (e.key === "ArrowUp") {
+        highlight(activeIndex - 1 < 0 ? n - 1 : activeIndex - 1);
+        e.preventDefault();
+      } else if (e.key === "Enter") {
+        choose(activeIndex >= 0 ? activeIndex : 0);
+        e.preventDefault();
+      }
+    });
+
+    tbSearchClear.addEventListener("click", () => {
+      tbSearch.value = "";
+      setHidden(tbSearchClear, true);
+      rows = [];
+      closeResults();
+      tbSearch.focus();
+    });
+
+    document.addEventListener("click", e => {
+      if (!tbSearchWrap.contains(e.target) && !tbResults.contains(e.target)) closeResults();
+    });
+    window.addEventListener("resize", () => {
+      if (isOpenResults()) positionResults();
+    });
+
+    // ── Deep links ───────────────────────────────────────────────────────────
+    //
+    // The URL is the share mechanism. `?pid=` selects that parcel through the
+    // same path a search result uses; `?city=` / `?watershed=` drive the
+    // Zoom to... control, again through its own checkbox and its own button.
+    // Nothing that is private goes in a URL: no API key, no owner name, and
+    // not the generated brief, which is a paid generation from someone else's
+    // key and is not reproducible from a link.
+    //
+    // The city and watershed lists are filled by two async queries, so a
+    // ?city= link has to wait for the entry to exist rather than assume it.
+
+    function applyDeepLink() {
+      const params = new URLSearchParams(window.location.search);
+      const pid = (params.get("pid") || "").replace(/[^0-9]/g, "");
+      const city = params.get("city");
+      const watershed = params.get("watershed");
+
+      if (pid && prApiSearch) {
+        prApiSearch.selectByPid(pid);
+      }
+
+      const wanted = watershed || city;
+      if (!wanted) return;
+      const kind = watershed ? "watershed" : "city";
+      const want = wanted.trim().toUpperCase();
+      let tries = 0;
+      const tick = () => {
+        const hit = zoomEntries().find(
+          e =>
+            e.kind.toLowerCase() === kind &&
+            (e.name.toUpperCase() === want || e.label.toUpperCase() === want)
+        );
+        if (hit) {
+          zoomToEntry(hit);
+          return;
+        }
+        // The lists arrive from two queries against live services; 20 x 400 ms
+        // is 8 s, well past the worst observed fill.
+        if (++tries < 20) setTimeout(tick, 400);
+        else console.warn(`[deep-link] no ${kind} named "${wanted}" in Zoom to...`);
+      };
+      tick();
+    }
+
+    applyDeepLink();
+
+    // Test surface for the search, the groups and the deep links. Nothing in
+    // the UI calls these; they exist because ArcGIS does not turn synthesized
+    // pointer events into a view "click" in a background tab, and because a
+    // clipboard write needs a gesture this cannot make.
+    window.NRPCToolbar = {
+      search: tbSearch,
+      results: tbResults,
+      groups: { map: groupMapRow, tools: groupToolsRow },
+      setGroup,
+      closeFloating,
+      runSearch,
+      choose,
+      zoomEntries,
+      get rows() {
+        return rows.map(r => ({ kind: r.kind, label: r.label, sub: r.sub }));
+      },
+      applyDeepLink,
+    };
 
   });
 });

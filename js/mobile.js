@@ -334,6 +334,8 @@
      * Escape and the back gesture dismiss, one layer at a time.
      */
     function topmost() {
+      const results = document.getElementById("tb-search-results");
+      if (results && !results.classList.contains("hidden")) return "search";
       if (svIsOpen()) return "streetview";
       if (api.isOpen()) return "sheet";
       const n = openSurfaceName();
@@ -345,7 +347,10 @@
     function closeTopmost() {
       const t = topmost();
       if (!t) return false;
-      if (t === "streetview") svClose();
+      if (t === "search") {
+        const results = document.getElementById("tb-search-results");
+        if (results) results.classList.add("hidden");
+      } else if (t === "streetview") svClose();
       else if (t === "sheet") api.closePanel();
       else if (t === "drawer") setMenu(false);
       else closeSurfaces();
@@ -489,6 +494,10 @@
     if (toolbarEl) {
       toolbarEl.addEventListener("click", e => {
         if (e.target.closest("#mb-parcel-layer-row")) return;
+        // The rationalised toolbar's group buttons open a row *inside* the
+        // drawer, and the search box lives in it. Closing the drawer on either
+        // would shut the thing the tap just opened.
+        if (e.target.closest(".tb-group-btn, #tb-search-wrap")) return;
         if (e.target.closest("button, calcite-button")) setTimeout(() => setMenu(false), 60);
       });
     }

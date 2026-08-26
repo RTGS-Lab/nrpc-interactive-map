@@ -310,7 +310,7 @@
       .replace(/>/g, "&gt;");
   }
 
-  async function esriQuery(url, params, timeoutMs) {
+  async function esriQuery(url, params, timeoutMs, signal) {
     const body = new URLSearchParams({ f: "json", ...params });
     // A per-request deadline, so one wedged service cannot hold the panel
     // open forever. Without a timeout the fetch just sits there.
@@ -319,6 +319,12 @@
     if (timeoutMs) {
       ctl = new AbortController();
       timer = setTimeout(() => ctl.abort(), timeoutMs);
+      // A caller's own signal — the search box aborting a superseded
+      // keystroke — is folded into the same controller, so either can cancel.
+      if (signal) {
+        if (signal.aborted) ctl.abort();
+        else signal.addEventListener("abort", () => ctl.abort(), { once: true });
+      }
     }
     let res;
     try {
@@ -326,9 +332,16 @@
         method: "POST",
         headers: { "Content-Type": "application/x-www-form-urlencoded" },
         body,
-        signal: ctl ? ctl.signal : undefined,
+        signal: ctl ? ctl.signal : signal || undefined,
       });
     } catch (e) {
+      // A caller that cancelled deliberately gets a recognisable error rather
+      // than a timeout message that would be a lie.
+      if (e.name === "AbortError" && signal && signal.aborted) {
+        const err = new Error("superseded");
+        err.name = "AbortError";
+        throw err;
+      }
       if (e.name === "AbortError") throw new Error(`${url} → timed out after ${timeoutMs / 1000}s`);
       throw e;
     } finally {
@@ -579,6 +592,96 @@
       outSR: "4326",
     });
     return (json.features || [])[0] || null;
+  }
+
+  /**
+   * The parcel with this exact PID, geometry and all — what a deep link and a
+   * search result both resolve to. Same layer, same shape of answer as
+   * fetchParcelAt(), so selectParcelFeature() cannot tell them apart.
+   */
+  async function fetchParcelByPid(pid) {
+    const clean13 = String(pid || "").replace(/[^0-9]/g, "");
+    if (!clean13) return null;
+    const json = await esriQuery(PARCEL_BASE, {
+      where: `PID='${clean13.replace(/'/g, "''")}'`,
+      outFields: "*",
+      returnGeometry: "true",
+      outSR: "4326",
+    });
+    return (json.features || [])[0] || null;
+  }
+
+  // ── Search ────────────────────────────────────────────────────────────────
+  //
+  // Two kinds of parcel lookup, both against PARCEL_BASE — the layer the map
+  // already shows and the report already queries. Field types verified against
+  // the live service on 2026-08-26: PID is a 13-char string, HOUSE_NO is an
+  // INTEGER and STREET_NM a 20-char string padded with trailing spaces, so an
+  // address is matched as a number AND a prefix rather than as one string.
+  // (`useStandardizedQueries` is true on this layer, so UPPER() and LIKE are
+  // available; returnDistinctValues is not — it 400s.)
+
+  const SEARCH_LIMIT = 10;
+
+  const searchRow = f => {
+    const a = f.attributes;
+    const house = clean(a.HOUSE_NO);
+    const street = clean(a.STREET_NM);
+    return {
+      pid: clean(a.PID),
+      address: [house, street].filter(v => v !== null && v !== "").join(" ") || null,
+      city: clean(a.MUNIC_NM),
+    };
+  };
+
+  /** PIDs beginning with these digits. A full 13 digits matches exactly one. */
+  async function searchByPid(digits, signal) {
+    const d = String(digits || "").replace(/[^0-9]/g, "");
+    if (!d) return [];
+    const where =
+      d.length >= 13 ? `PID='${d.slice(0, 13)}'` : `PID LIKE '${d}%'`;
+    const json = await esriQuery(
+      PARCEL_BASE,
+      {
+        where,
+        outFields: "PID,HOUSE_NO,STREET_NM,MUNIC_NM",
+        returnGeometry: "false",
+        orderByFields: "PID",
+        resultRecordCount: String(SEARCH_LIMIT),
+      },
+      8000,
+      signal
+    );
+    return (json.features || []).map(searchRow);
+  }
+
+  /**
+   * Addresses beginning with this text. "224 83rd" becomes
+   * HOUSE_NO=224 AND UPPER(STREET_NM) LIKE '83RD%'; a query with no leading
+   * number is a street-name prefix on its own.
+   */
+  async function searchByAddress(text, signal) {
+    const t = String(text || "").trim().toUpperCase();
+    if (t.length < 3) return [];
+    const m = t.match(/^(\d+)\s+(.*)$/);
+    const esc1 = v => v.replace(/'/g, "''").replace(/[%_]/g, "");
+    let where;
+    if (m && m[2]) where = `HOUSE_NO=${m[1]} AND UPPER(STREET_NM) LIKE '${esc1(m[2])}%'`;
+    else if (m) where = `HOUSE_NO=${m[1]}`;
+    else where = `UPPER(STREET_NM) LIKE '${esc1(t)}%'`;
+    const json = await esriQuery(
+      PARCEL_BASE,
+      {
+        where,
+        outFields: "PID,HOUSE_NO,STREET_NM,MUNIC_NM",
+        returnGeometry: "false",
+        orderByFields: "STREET_NM,HOUSE_NO",
+        resultRecordCount: String(SEARCH_LIMIT),
+      },
+      8000,
+      signal
+    );
+    return (json.features || []).map(searchRow);
   }
 
   async function fetchModelScores(pid) {
@@ -2003,7 +2106,45 @@
     });
     exportRow.append(exportBtn, exportNote);
 
-    body.append(factsBox, actions, reportBox, exportRow);
+    // Appears with the facts, not with the brief: a parcel is shareable and
+    // exportable the moment it is selected. "Export as PDF" stays where it
+    // was — it prints the brief, so it still waits for one.
+    const shareRow = el("div", { id: "pr-share-row", className: "hidden" });
+    const docxBtn = el("button", {
+      id: "pr-export-docx",
+      type: "button",
+      textContent: "Export as DOCX",
+      title: "A Word document of this report — the same sections as the printed one",
+    });
+    const shareBtn = el("button", {
+      id: "pr-share",
+      type: "button",
+      textContent: "Share",
+      title:
+        "Copies a link to this parcel. The link opens the same parcel; it does not " +
+        "carry the generated brief, your API key, or owner names.",
+    });
+    const shareNote = el("span", {
+      className: "pr-export-note",
+      id: "pr-share-note",
+      textContent: "The link opens this parcel — not the brief.",
+    });
+    shareRow.append(docxBtn, shareBtn, shareNote);
+
+    body.append(factsBox, actions, reportBox, exportRow, shareRow);
+
+    // One toast for the panel's own messages — "Link copied", "DOCX failed".
+    // The mobile layer has its own; this one belongs to the report and works
+    // on a desktop too.
+    const toast = el("div", { id: "pr-toast", className: "hidden" });
+    document.body.appendChild(toast);
+    let toastTimer = null;
+    function say(text, kind, ms) {
+      toast.textContent = text;
+      toast.className = kind ? "pr-toast-" + kind : "";
+      clearTimeout(toastTimer);
+      toastTimer = setTimeout(() => toast.classList.add("hidden"), ms || 3500);
+    }
 
     // The printable document. Lives outside the panel, hidden on screen, and
     // is the only thing the print stylesheet leaves visible.
@@ -2147,6 +2288,7 @@
       }
       factsBox.classList.remove("hidden");
       actions.classList.remove("hidden");
+      shareRow.classList.remove("hidden");
       hint.classList.add("hidden");
     }
 
@@ -2187,6 +2329,7 @@
       keyForm.classList.add("hidden");
       factsBox.classList.add("hidden");
       actions.classList.add("hidden");
+      shareRow.classList.add("hidden");
       hint.classList.remove("hidden");
       hint.textContent = "Loading parcel…";
       openPanel();
@@ -2240,6 +2383,56 @@
         await selectParcelFeature(feature, lon, lat);
       } catch (e) {
         hint.textContent = `Could not load the parcel: ${e.message}`;
+      }
+    }
+
+    /**
+     * Select a parcel by PID and move the map to it — the third selection
+     * path, after the map click and the mobile fix. A search result and a
+     * `?pid=` deep link both land here, and both end in the SAME
+     * selectParcelFeature() the other two do, so none of the four can drift.
+     *
+     * The "point" a PID selection was made at is the centre of the parcel's
+     * own bounding box; the report shows it as the clicked point, which is
+     * true of how the selection was made.
+     */
+    async function selectByPid(pid, opts) {
+      const o = opts || {};
+      beginLoad();
+      try {
+        const feature = await timed("parcel", () => fetchParcelByPid(pid));
+        if (!feature) {
+          hint.textContent = `No Hennepin County parcel with PID ${pid}.`;
+          return null;
+        }
+        const bbox = feature.geometry ? ringsBBox(feature.geometry) : null;
+        const lon = bbox ? (bbox.xmin + bbox.xmax) / 2 : null;
+        const lat = bbox ? (bbox.ymin + bbox.ymax) / 2 : null;
+        const f = await selectParcelFeature(feature, lon, lat);
+        if (bbox && o.zoom !== false) {
+          // Padded so the parcel is not flush against the panel edge.
+          const pad = padBBox(bbox, 120);
+          const target = {
+            type: "extent",
+            xmin: pad.xmin, ymin: pad.ymin, xmax: pad.xmax, ymax: pad.ymax,
+            spatialReference: { wkid: 4326 },
+          };
+          // A goTo animation is driven by requestAnimationFrame, and a HIDDEN
+          // tab does not run one: the promise never settles and the map never
+          // moves. That is not a hypothetical — it is exactly what a shared
+          // "?pid=" link opened in a background tab does, and it is how this
+          // was found (measured: goTo pending past 45 s with document.hidden
+          // true). So a hidden tab jumps straight to the extent, and the
+          // animation is kept for the case it can actually be seen.
+          if (document.hidden) view.extent = target;
+          else view.goTo({ target }).catch(() => {
+            /* the user interrupted the animation — they win */
+          });
+        }
+        return f;
+      } catch (e) {
+        hint.textContent = `Could not load PID ${pid}: ${e.message}`;
+        return null;
       }
     }
 
@@ -2300,6 +2493,102 @@
     }
 
     generateBtn.addEventListener("click", generate);
+
+    // ── Share ────────────────────────────────────────────────────────────────
+    //
+    // The share mechanism IS the deep link: ?pid=<PID> on this same page, which
+    // main.js resolves on load through selectByPid(). Nothing else goes in the
+    // URL — not the Anthropic key, not the owner or taxpayer names, and not the
+    // brief. The brief is a paid generation from a private key and it is not
+    // reproducible from a URL, so sharing it would promise something the link
+    // cannot deliver; the tooltip and the note beside the button say so.
+
+    function shareUrl() {
+      const pid = facts && facts.identity && facts.identity.pid;
+      if (!pid) return null;
+      const u = new URL(window.location.href);
+      u.hash = "";
+      u.search = "";
+      u.searchParams.set("pid", pid);
+      return u.toString();
+    }
+
+    shareBtn.addEventListener("click", async () => {
+      const url = shareUrl();
+      if (!url) return;
+      const title = "Parcel " + facts.identity.pid;
+      const where = [facts.identity.address, facts.identity.city].filter(Boolean).join(", ");
+      // navigator.share is the right thing on a phone and needs the gesture we
+      // are already inside. It rejects with AbortError when the user dismisses
+      // the sheet — that is not a failure and must not fall through to a
+      // "copied" toast for a link that was not copied.
+      if (navigator.share) {
+        try {
+          await navigator.share({ title, text: where || title, url });
+          return;
+        } catch (e) {
+          if (e && e.name === "AbortError") return;
+          // Anything else (no permission, unsupported target): fall through.
+        }
+      }
+      try {
+        await navigator.clipboard.writeText(url);
+        // 5 s, not the 3.5 s default: this one carries a caveat the reader
+        // has to finish before it goes.
+        say("Link copied — it opens this parcel, not the brief.", "ok", 5000);
+      } catch (e) {
+        // Clipboard denied (an insecure origin, or a browser that wants a
+        // stricter gesture). Show the link rather than swallowing it.
+        shareNote.textContent = url;
+        shareNote.classList.add("pr-share-url");
+        say("Could not reach the clipboard — the link is shown below.", "warn", 6000);
+      }
+    });
+
+    // ── Export as DOCX ───────────────────────────────────────────────────────
+    //
+    // Built from the SAME print document "Export as PDF" prints, so the two
+    // exports cannot drift into two different reports. It does not wait for a
+    // brief: the facts, the scores, the context layers and the shared
+    // opportunities are worth a document on their own, and the brief is added
+    // to it when there is one.
+    docxBtn.addEventListener("click", async () => {
+      if (!facts) return;
+      if (!window.NRPCDocx) {
+        say("The DOCX writer did not load (js/docx-writer.js).", "warn", 6000);
+        return;
+      }
+      const label = docxBtn.textContent;
+      docxBtn.disabled = true;
+      docxBtn.textContent = "Building…";
+      try {
+        const meta = lastReport || { generatedAt: new Date(), model: null };
+        buildPrintDoc(printRoot, facts, lastReport ? lastReport.html : null, meta);
+        const pid = facts.identity.pid || "parcel";
+        const blob = await window.NRPCDocx.docxFromPrintRoot(printRoot, "Parcel Report " + pid);
+        const a = document.createElement("a");
+        a.href = URL.createObjectURL(blob);
+        a.download = `parcel-report-${pid}.docx`;
+        document.body.appendChild(a);
+        a.click();
+        setTimeout(() => {
+          URL.revokeObjectURL(a.href);
+          a.remove();
+        }, 2000);
+        say(
+          lastReport
+            ? "DOCX saved — facts, scores, context, opportunities and the brief."
+            : "DOCX saved — facts, scores, context and opportunities. Generate a report to include the brief.",
+          "ok",
+          5000
+        );
+      } catch (e) {
+        say("Could not build the DOCX: " + e.message, "warn", 6000);
+      } finally {
+        docxBtn.disabled = false;
+        docxBtn.textContent = label;
+      }
+    });
 
     exportBtn.addEventListener("click", () => {
       if (!facts || !lastReport) return;
@@ -2396,6 +2685,15 @@
         return facts;
       },
       showReport: md => showReport(md, modelSelect.value),
+      selectByPid,
+      shareUrl,
+      // Build the .docx and hand it back rather than downloading it, so a test
+      // can open the bytes without driving a browser download.
+      docxBlob: async () => {
+        const meta = lastReport || { generatedAt: new Date(), model: null };
+        buildPrintDoc(printRoot, facts, lastReport ? lastReport.html : null, meta);
+        return window.NRPCDocx.docxFromPrintRoot(printRoot, "Parcel Report");
+      },
       buildPrintDoc: () => {
         if (!facts || !lastReport) return false;
         buildPrintDoc(printRoot, facts, lastReport.html, lastReport);
@@ -2433,6 +2731,16 @@
       onExport: fn => exportBtn.addEventListener("click", fn),
       // Where the open report's parcel is, or null.
       lastPoint: () => (lastPoint ? { ...lastPoint } : null),
+      // The third selection path: by PID, from a search result or a deep link.
+      selectByPid,
+      // The parcel lookups the search box drives. They live here because this
+      // file already owns PARCEL_BASE and its field names; main.js owns the UI
+      // and knows nothing about the service.
+      search: { byPid: searchByPid, byAddress: searchByAddress },
+      // The URL the Share button writes. Exposed so a caller can show it
+      // without going through the clipboard.
+      shareUrl,
+      identity: () => (facts && facts.identity ? { ...facts.identity } : null),
       // Called after every successful selection, with (facts, point).
       onSelect: fn => {
         if (typeof fn === "function") selectListeners.push(fn);

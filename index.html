@@ -29,6 +29,10 @@
   <script src="js/config.js"></script>
   <script src="js/shp-writer.js"></script>
   <script src="js/export-utils.js"></script>
+  <!-- A .docx is a ZIP of XML parts, so this reuses the JSZip above rather
+       than adding a dependency. Nothing on the page requires it: the DOCX
+       button says so if it is missing. -->
+  <script src="js/docx-writer.js"></script>
   <script src="js/parcel-report.js"></script>
   <!-- Mobile only defines window.NRPCMobile; parcel-report.js calls into it at
        the end of init(), and it returns immediately on a desktop. -->

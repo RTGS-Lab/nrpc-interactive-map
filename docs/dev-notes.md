@@ -781,3 +781,157 @@ the dates row ride with it unchanged.
 `window.NRPCStreetView` is the surface the rest of the app drives it through:
 `open(lat, lng)`, `openPanel()`, `closePanel()`, `isOpen()`, `setPickMode(on)`,
 `isPickMode()`, plus `panel`, `tab` and `toggle`.
+
+---
+
+## Search, Share, DOCX and the rationalised menu (branch `integrate`)
+
+Bryan, Wed 26 Aug: *"Add a search: PID, address, city, watershed. Add a 'share'
+button to the end of the report. Add Export as PDF; export as docx. If city or
+watershed, select in the 'Zoom To' menu. Rationalize the top menu so it manages
+cognitive load better."* — and *"Do across all"*: every one of these lands on
+desktop, on the phone, and alongside Street View, which is why the three
+branches had to become one app first.
+
+### The toolbar
+
+| Before | After |
+|---|---|
+| home · Legend · Layers · Contribute · Basemap · Zoom to... · Clip & Zip | home · **search** · **Map ▾** · **Zoom to... ▾** · **Tools ▾** |
+
+Six equal top-level buttons become one field and three groups. The grouped
+controls are the **same elements, with the same ids and the same handlers**,
+reparented into a second row that opens under its group button. Nothing that
+`mobile.js` or `parcel-report.js` reaches for by id has moved or changed name.
+
+A **row**, not a floating menu, and that is the load-bearing decision: Basemap,
+Zoom to... and Clip & Zip each position their own dropdown from their button's
+`getBoundingClientRect()`. A button inside a closed floating menu has no rect
+to measure, so a menu-in-a-menu would either mis-place those dropdowns or stack
+two panels — which is the bug this is supposed to fix.
+
+`#toggle-bar` lives on `<body>` (see *Integration* above for why `.esri-ui`
+makes that necessary) as a flex column: `#tb-primary`, then `#tb-group-map` and
+`#tb-group-tools`, at most one of which is not `hidden`.
+
+**One panel at a time.** The three floating dropdowns each had their own opener
+and nothing ever closed the other two (`docs/map-test-report.md`). One
+`closeFloating()` now owns "what else must close", enforced by a
+`MutationObserver` per dropdown rather than by six rewritten handlers — the
+mechanism `mobile.js` uses, and with it `mobile.js`'s rule: **every class write
+goes through a setter that writes only on a real change**, or observers that
+close each other wake each other forever.
+
+**The dot.** Grouping hides state as well as controls — the app opens with the
+layer list showing and "Layers" marked active, and that mark is now inside a
+collapsed row. `.tb-has-active` puts a dot on the group button so the fact is
+still on the surface.
+
+### Search
+
+One field, four kinds, grouped by kind in the results:
+
+| Kind | Where the answer comes from |
+|---|---|
+| PID | `PARCEL_BASE`, `PID LIKE '<digits>%'` (13 digits matches exactly) |
+| Address | `PARCEL_BASE`, `HOUSE_NO=<n> AND UPPER(STREET_NM) LIKE '<rest>%'`; no leading number is a street prefix on its own |
+| City | the 46 names **Zoom to... already holds** — local, no network |
+| Watershed | the 13 names **Zoom to... already holds** — local, no network |
+
+Verified against the live service on 2026-08-26: `PID` is a 13-char string,
+`HOUSE_NO` is an **integer** and `STREET_NM` a 20-char string padded with
+trailing spaces, so an address is matched as a number AND a prefix rather than
+as one concatenated string. `useStandardizedQueries` is true (so `UPPER()` and
+`LIKE` work); `returnDistinctValues` is **not** supported — it 400s.
+
+Cities and watersheds sort above parcels when both match: someone typing
+"brookl" wants Brooklyn Park, not the ten Brooklyn Blvd addresses that sort
+above it alphabetically. A PID or a house number never matches them, so nothing
+is displaced when the query really is a parcel.
+
+Debounce 250 ms; a superseded query is aborted through the caller `signal`
+`esriQuery()` now accepts, and a stale answer that still lands is dropped by
+sequence number. Keyboard: ↑ / ↓ / Enter / Esc.
+
+**Selecting a result never forks a code path.** A parcel goes through
+`NRPCParcelReport.api.selectByPid()`, which ends in the same
+`selectParcelFeature()` a map click and a phone's location fix end in. A city or
+watershed **drives the Zoom to... control** — it ticks that entry's checkbox and
+clicks the existing zoom button — rather than doing its own `goTo`. The two
+controls can never disagree about what is selected, because there is only one
+selection: the dropdown's label, the highlight graphic and the Clip & Zip
+geometry all update because the checkbox's own change handler ran.
+
+### Deep links, and Share
+
+The URL **is** the share mechanism.
+
+```
+?pid=<PID>          select that parcel (and move the map to it)
+?city=<name>        tick that city in Zoom to... and run its zoom
+?watershed=<name>   the same, for a watershed district
+```
+
+`applyDeepLink()` runs once the view is ready. The city and watershed lists
+arrive from two async queries, so a `?city=` link retries for up to 8 s for the
+entry to exist rather than assuming it.
+
+**Share** (`#pr-share`, at the end of the report) writes that URL, prefers
+`navigator.share` where it exists, and otherwise copies to the clipboard with a
+"Link copied" toast. What is deliberately **not** in the URL: the Anthropic key,
+owner and taxpayer names, and the generated brief. The brief is a paid
+generation from a private key and is not reproducible from a link, so sharing it
+would promise something the link cannot deliver — the button's tooltip and the
+note beside it say so. A refused clipboard prints the link instead of losing it.
+
+### Export as DOCX
+
+`js/docx-writer.js`, `window.NRPCDocx.docxFromPrintRoot(root, title)`.
+
+A `.docx` is a ZIP of XML parts and the app already loads JSZip for Clip & Zip,
+so this adds **no dependency**. Parts written: `[Content_Types].xml`,
+`_rels/.rels`, `word/document.xml`, `word/styles.xml`, `word/numbering.xml`,
+`word/_rels/document.xml.rels`, `docProps/core.xml`.
+
+The content comes from the **same `#pr-print` DOM that "Export as PDF" prints**,
+filled by `buildPrintDoc()`. One document, two renderers — the PDF and the DOCX
+cannot drift into two different reports. `docx-writer.js` knows nothing about
+parcels: it maps `table` → `w:tbl`, `h1/h2/h3` → the heading styles, `ul/li` →
+a numbered bullet list, `strong/em/code` → run properties, and the print view's
+own classes (`.pr-print-kicker`, `.pr-opp-print-head`, …) to styles. An element
+it does not recognise becomes a paragraph of its text, so a new print section
+appears in the DOCX as prose rather than vanishing from it.
+
+Two things Word is strict about and LibreOffice is not: a `w:tbl` **must** be
+followed by a `w:p`, and `w:t` **must** carry `xml:space="preserve"` or the
+spaces between adjacent runs are eaten.
+
+Unlike "Export as PDF", DOCX does not wait for a brief — the facts, the scores,
+the context layers and the shared opportunities are worth a document on their
+own, and the brief is added when there is one. "Export as PDF" is unchanged.
+
+### `document.hidden` and `view.goTo()`
+
+A `goTo` animation is driven by `requestAnimationFrame`, which a **hidden** tab
+does not run: the promise never settles and the map never moves. Measured here —
+`goTo` still pending past 45 s with `document.hidden` true. This is not a test
+artefact: it is exactly what a shared `?pid=` link opened in a background tab
+does. `selectByPid()` and `goToExtent()` therefore assign `view.extent` directly
+when the document is hidden, and keep the animation for when it can be watched.
+
+### Test surfaces
+
+Nothing in the UI calls these. They exist because ArcGIS does not turn
+synthesized CDP pointer events into a view `"click"` in a background tab, and
+because a clipboard write needs a gesture a script cannot make.
+
+```js
+NRPCParcelReport.dev.mapClick(lat, lon)   // the click handler's body → "intercepted" | "parcel"
+NRPCParcelReport.dev.hasClickInterceptor()
+NRPCParcelReport.dev.selectByPid(pid)
+NRPCParcelReport.dev.shareUrl()
+NRPCParcelReport.dev.docxBlob()           // the .docx bytes, without a download
+NRPCToolbar.runSearch(text) / .rows / .choose(i) / .zoomEntries()
+NRPCToolbar.setGroup(row) / .closeFloating() / .applyDeepLink()
+NRPCStreetView.setPickMode(on) / .open(lat, lng)
+```
