@@ -2,7 +2,8 @@
  * Parcel Report
  *
  * Click a parcel → a panel of the facts we can pull for it → "Generate report"
- * → a written site summary from Claude, streamed into the panel.
+ * → a written site summary from Claude, streamed into the panel → "Export as
+ * PDF", which prints a clean, map-free version of the whole thing.
  *
  * Self-contained: no build step, no bundler, no dependency beyond what
  * index.html already loads. main.js hands us the view; everything else in here
@@ -155,7 +156,7 @@
   const num = v => (typeof v === "number" && isFinite(v) ? v : null);
 
   // Hennepin uses all-zero strings as "no value" in the year and code fields.
-  const yearOrNull = v => {
+  const zeroStrOrNull = v => {
     const s = clean(v);
     return s && /^[0]+$/.test(s) ? null : s;
   };
@@ -330,7 +331,7 @@
         parcelAcres: acres === null ? null : Number(acres.toFixed(2)),
         propertyType: clean(a.PROPERTY_TYPE_CD1_NAME),
         homesteadStatus: clean(a.HMSTD_CD1_NAME),
-        yearBuilt: yearOrNull(a.BUILD_YR),
+        yearBuilt: zeroStrOrNull(a.BUILD_YR),
         taxForfeitLand: clean(a.FORFEIT_LAND_IND),
         schoolDistrict: clean(a.SCHOOL_DIST_NO),
         watershedNo: clean(a.WATERSHED_NO),
@@ -575,6 +576,225 @@
     return rows.filter(([, v]) => v !== null && v !== undefined && v !== "");
   }
 
+  // ── Print view — the "Export as PDF" path ────────────────────────────────
+  //
+  // No PDF library, by choice. "Export as PDF" builds a print-only copy of the
+  // report into #pr-print and calls window.print(); the browser's own "Save as
+  // PDF" destination writes the file. A print stylesheet hides the map, the
+  // panel and every control, so what lands on the page is the report and
+  // nothing else.
+  //
+  // Why not jsPDF/html2canvas: html2canvas rasterises the panel, so the text
+  // stops being text — unselectable, unsearchable, and soft on any printer —
+  // and both libraries would add a pinned CDN script to a feature that today
+  // has no dependency at all. Printing keeps real vector text, lets the browser
+  // paginate and honour the user's paper size, and costs exactly one extra
+  // click in the print dialog. The button label says so out loud.
+
+  const SOURCE_LINE =
+    "Sources, queried live from ArcGIS REST at the moment of export: Hennepin County " +
+    "Parcel Base (assessment attributes); Hennepin County Parcel Prioritization Model " +
+    "Results, parcel view (component scores and county rank); and nine natural-resource " +
+    "context layers — county parks, DNR public water basins, regional trails, Met " +
+    "Council ecologically significant and sensitive areas, Met Council protection and " +
+    "improvement opportunities, publicly owned and tax-exempt parcels, and BWSR " +
+    "watershed districts.";
+
+  function fmtDateTime(d) {
+    try {
+      return d.toLocaleString(undefined, { dateStyle: "long", timeStyle: "short" });
+    } catch (_) {
+      return d.toISOString();
+    }
+  }
+
+  // Hennepin publishes SALE_DATE as YYYYMM.
+  function saleDate(v) {
+    const s = clean(v);
+    if (!s) return null;
+    return /^\d{6}$/.test(s) ? `${s.slice(0, 4)}-${s.slice(4)}` : s;
+  }
+
+  // A label/value table, with the empty rows dropped. Returns null if nothing
+  // survived, so the caller can skip the whole section.
+  function printTable(rows) {
+    const kept = rows.filter(([, v]) => v !== null && v !== undefined && v !== "");
+    if (!kept.length) return null;
+    const t = el("table", { className: "pr-print-table" });
+    kept.forEach(([k, v]) => {
+      const tr = el("tr");
+      tr.append(el("th", { textContent: k }), el("td", { textContent: String(v) }));
+      t.append(tr);
+    });
+    return t;
+  }
+
+  /**
+   * Fill `root` with the printable document: identity, facts, model scores,
+   * context layers, the generated brief, when it was made and where it came
+   * from. `reportHTML` is what renderMarkdown() already escaped and rendered,
+   * so nothing here re-introduces raw model output.
+   */
+  function buildPrintDoc(root, facts, reportHTML, meta) {
+    const f = facts;
+    root.innerHTML = "";
+
+    const section = (heading, ...kids) => {
+      const kept = kids.filter(Boolean);
+      if (!kept.length) return;
+      const s = el("section", { className: "pr-print-section" });
+      s.append(el("h2", { textContent: heading }), ...kept);
+      root.append(s);
+    };
+
+    // -- header --
+    // Hennepin writes an all-zero ZIP_CD where it has none; printing "00000"
+    // under the address would read as a real zip.
+    const zip = zeroStrOrNull(f.identity.zip);
+    const where =
+      [f.identity.address, f.identity.city, zip].filter(Boolean).join(", ") ||
+      "No street address on the county record";
+    const head = el("header", { className: "pr-print-head" });
+    head.append(
+      el("div", { className: "pr-print-kicker", textContent: "NRPC Interactive Map · Parcel Report" }),
+      el("h1", { className: "pr-print-title", textContent: "PID " + (f.identity.pid || "unknown") }),
+      el("div", { className: "pr-print-sub", textContent: where }),
+      el("div", {
+        className: "pr-print-meta",
+        textContent:
+          "Generated " +
+          fmtDateTime(meta.generatedAt) +
+          (meta.model ? " · brief written by " + meta.model : "") +
+          " · clicked point " +
+          f.clickedAt.lat.toFixed(5) +
+          ", " +
+          f.clickedAt.lon.toFixed(5),
+      })
+    );
+    root.append(head);
+
+    // -- the parcel --
+    const legal = [
+      f.identity.legalAddition,
+      f.identity.lot ? "Lot " + f.identity.lot : null,
+      f.identity.block ? "Block " + f.identity.block : null,
+    ]
+      .filter(Boolean)
+      .join(", ");
+    // No sale date means no sale on the record — a bare "$0" there would read
+    // as a fact rather than as an absence.
+    const soldOn = saleDate(f.value.lastSaleDateYYYYMM);
+    const sale = soldOn
+      ? [soldOn, money(f.value.lastSalePrice), f.value.lastSaleType].filter(Boolean).join(" · ")
+      : null;
+
+    section(
+      "The parcel",
+      printTable([
+        ["PID", f.identity.pid],
+        ["Address", where],
+        ["Legal description", legal],
+        [
+          "Size",
+          f.land.parcelAcres === null
+            ? null
+            : `${f.land.parcelAcres} acres (${Math.round(f.land.parcelAreaSqFt).toLocaleString("en-US")} sq ft)`,
+        ],
+        ["Property type", f.land.propertyType],
+        ["Homestead", f.land.homesteadStatus],
+        ["Year built", f.land.yearBuilt],
+        ["Tax-forfeit land", f.land.taxForfeitLand],
+        ["School district", f.land.schoolDistrict],
+        ["Watershed no.", f.land.watershedNo],
+        ["Est. market value", money(f.value.estimatedMarketValueTotal)],
+        ["Est. land value", money(f.value.estimatedLandValue)],
+        ["Est. building value", money(f.value.estimatedBuildingValue)],
+        ["Total tax", money(f.value.totalTax)],
+        ["Last sale", sale],
+      ])
+    );
+
+    // -- the model --
+    if (f.model) {
+      const rankText =
+        f.model.rank === null
+          ? "not ranked"
+          : f.model.rank.toLocaleString("en-US") +
+            (f.model.parcelsRanked
+              ? ` of ${f.model.parcelsRanked.toLocaleString("en-US")} ranked parcels ` +
+                `(top ${topPct(f.model.rank, f.model.parcelsRanked)} of the county)`
+              : "");
+      section(
+        "Prioritization model",
+        printTable([
+          ["County rank", rankText],
+          ...SCORE_FIELDS.map(([, alias]) => {
+            const v = num(f.model.scores[alias]);
+            return [alias, v === null ? null : v.toFixed(3)];
+          }),
+        ]),
+        el("p", { className: "pr-print-note", textContent: f.model.note })
+      );
+    } else {
+      section(
+        "Prioritization model",
+        el("p", {
+          className: "pr-print-note",
+          textContent: "This parcel is not present in the prioritization model layer.",
+        })
+      );
+    }
+
+    // -- context --
+    section(
+      `Context within ${f.contextBufferMetres} m`,
+      printTable(
+        f.context.map(c => {
+          let v;
+          if (c.error) v = "layer unavailable at export time";
+          else if (!c.count) v = "none";
+          else
+            v =
+              `${c.count}${c.truncated ? "+" : ""}` +
+              (c.names.length ? " — " + c.names.join("; ") : "");
+          return [c.layer, v];
+        })
+      ),
+      el("p", {
+        className: "pr-print-note",
+        textContent:
+          `Context features are matched against the parcel's bounding box padded by ` +
+          `${f.contextBufferMetres} m, so a hit means on or near the parcel, never inside it. ` +
+          "A count marked + is a floor: the query returns at most eight features per layer.",
+      })
+    );
+
+    // -- the brief --
+    if (reportHTML) {
+      section(
+        "Site brief",
+        el("div", { className: "pr-print-brief", innerHTML: reportHTML })
+      );
+    }
+
+    // -- provenance --
+    const foot = el("footer", { className: "pr-print-foot" });
+    foot.append(
+      el("p", { textContent: SOURCE_LINE }),
+      el("p", {
+        textContent:
+          "Owner and taxpayer names are on the county record but are deliberately left " +
+          "out of this export, as they are left out of the request sent to the model.",
+      }),
+      el("p", {
+        textContent:
+          "The brief is written by a language model from the data above and is not a " +
+          "substitute for a site visit, a survey, or a title search.",
+      })
+    );
+    root.append(foot);
+  }
+
   // ── UI ───────────────────────────────────────────────────────────────────
 
   function init({ view, Graphic, GraphicsLayer }) {
@@ -608,7 +828,22 @@
     const factsBox = el("div", { id: "pr-facts", className: "hidden" });
     const actions = el("div", { id: "pr-actions", className: "hidden" });
     const reportBox = el("div", { id: "pr-report", className: "hidden" });
-    body.append(factsBox, actions, reportBox);
+
+    // Appears only once a report has finished rendering.
+    const exportRow = el("div", { id: "pr-export-row", className: "hidden" });
+    const exportBtn = el("button", { id: "pr-export", textContent: "Export as PDF" });
+    const exportNote = el("span", {
+      className: "pr-export-note",
+      textContent: "Pick “Save as PDF” as the destination in the print dialog.",
+    });
+    exportRow.append(exportBtn, exportNote);
+
+    body.append(factsBox, actions, reportBox, exportRow);
+
+    // The printable document. Lives outside the panel, hidden on screen, and
+    // is the only thing the print stylesheet leaves visible.
+    const printRoot = el("div", { id: "pr-print" });
+    document.body.appendChild(printRoot);
 
     // -- generate / owner toggle --
     const generateBtn = el("button", { id: "pr-generate", textContent: "Generate report" });
@@ -664,6 +899,10 @@
     let facts = null;
     let busy = false;
     let abortCtl = null;
+    // The finished report: its Markdown, the HTML we rendered from it, when it
+    // finished, and which model wrote it. Null until one completes — which is
+    // exactly the condition the export button appears under.
+    let lastReport = null;
 
     const getKey = () => {
       try {
@@ -734,11 +973,36 @@
       hint.classList.add("hidden");
     }
 
+    /**
+     * The one place a report is declared finished. Both the streamed path and
+     * the dev hook go through here, so "the export button is showing" always
+     * means "this exact render succeeded".
+     */
+    function showReport(markdown, model) {
+      lastReport = {
+        markdown,
+        html: renderMarkdown(markdown),
+        generatedAt: new Date(),
+        model: model || modelSelect.value,
+      };
+      reportBox.innerHTML = lastReport.html;
+      reportBox.classList.remove("hidden");
+      exportRow.classList.remove("hidden");
+    }
+
+    function clearReport() {
+      lastReport = null;
+      reportBox.innerHTML = "";
+      reportBox.classList.add("hidden");
+      exportRow.classList.add("hidden");
+      printRoot.innerHTML = "";
+      document.body.classList.remove("pr-print-ready");
+    }
+
     async function loadParcel(lon, lat) {
       if (abortCtl) abortCtl.abort();
       facts = null;
-      reportBox.classList.add("hidden");
-      reportBox.innerHTML = "";
+      clearReport();
       keyForm.classList.add("hidden");
       factsBox.classList.add("hidden");
       actions.classList.add("hidden");
@@ -783,8 +1047,8 @@
       generateBtn.disabled = true;
       generateBtn.textContent = "Generating…";
       setStatus("Calling " + modelSelect.value + "…", "busy");
+      clearReport();
       reportBox.classList.remove("hidden");
-      reportBox.innerHTML = "";
 
       let text = "";
       abortCtl = new AbortController();
@@ -801,7 +1065,14 @@
             reportBox.scrollTop = reportBox.scrollHeight;
           },
         });
-        setStatus(text ? "Done." : "The model returned nothing.", text ? "ok" : "warn");
+        if (text.trim()) {
+          // Re-render from the finished text rather than trusting the last
+          // streamed frame, and reveal the export button.
+          showReport(text, modelSelect.value);
+          setStatus("Done.", "ok");
+        } else {
+          setStatus("The model returned nothing.", "warn");
+        }
       } catch (e) {
         if (e.name === "AbortError") {
           setStatus("Cancelled.", "warn");
@@ -819,6 +1090,16 @@
     }
 
     generateBtn.addEventListener("click", generate);
+
+    exportBtn.addEventListener("click", () => {
+      if (!facts || !lastReport) return;
+      buildPrintDoc(printRoot, facts, lastReport.html, lastReport);
+      // The class arms the print stylesheet. It stays on until the report is
+      // replaced, so a plain Ctrl+P after an export prints the report too —
+      // and before any export, Ctrl+P still prints the map as it always did.
+      document.body.classList.add("pr-print-ready");
+      window.print();
+    });
 
     keyForm.addEventListener("submit", e => {
       e.preventDefault();
@@ -849,6 +1130,25 @@
       if (!pt || typeof pt.latitude !== "number") return;
       await loadParcel(pt.longitude, pt.latitude);
     });
+
+    // Dev hooks. Nothing in the UI calls these. They exist so the export path
+    // can be exercised end to end without an Anthropic key and without
+    // spending a token: load a real parcel, push a canned brief through the
+    // very same showReport() a streamed one ends in, then export.
+    //
+    //   NRPCParcelReport.dev.loadParcel(-93.5687, 45.0357)
+    //   NRPCParcelReport.dev.showReport("## Summary\n…")
+    //   NRPCParcelReport.dev.buildPrintDoc()   // fills #pr-print, no dialog
+    window.NRPCParcelReport.dev = {
+      loadParcel,
+      showReport: md => showReport(md, modelSelect.value),
+      buildPrintDoc: () => {
+        if (!facts || !lastReport) return false;
+        buildPrintDoc(printRoot, facts, lastReport.html, lastReport);
+        document.body.classList.add("pr-print-ready");
+        return true;
+      },
+    };
 
     updateFooter();
   }

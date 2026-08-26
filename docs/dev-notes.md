@@ -163,3 +163,47 @@ The system prompt forbids any fact not in the supplied JSON, requires missing
 fields to be named as missing, and requires "on or near" wording for the
 buffered context hits. Model output is HTML-escaped before the tiny Markdown
 renderer touches it, so a response can never inject markup into the page.
+
+### Export as PDF
+
+The panel grows an **Export as PDF** button the moment a report finishes
+rendering, and loses it again the moment a new parcel is clicked or a new
+generation starts. `showReport()` is the one place that decides a report is
+finished — both the streamed path and the dev hooks go through it — so "the
+button is showing" always means "that exact render succeeded".
+
+**No PDF library.** The button builds a print-only copy of the report into
+`#pr-print` and calls `window.print()`; the browser's own "Save as PDF"
+destination writes the file. `html2canvas` + `jsPDF` would rasterise the panel,
+so the text would stop being text — unselectable, unsearchable, soft on any
+printer — and would add a pinned CDN script to a feature that has no dependency
+at all today. Printing keeps real vector text, lets the browser paginate and
+honour the user's paper size, and costs one extra click in the print dialog.
+The button's helper text says so.
+
+The print stylesheet is armed by `body.pr-print-ready`, which only the export
+adds. Before any export, plain Ctrl+P still prints the map exactly as it always
+did. Once armed, `body.pr-print-ready > *:not(#pr-print) { display: none }`
+hides the map, the panel and every control, so a page of paper carries the
+report and nothing else. Sections flow across pages; the atoms that never split
+are table rows and headings.
+
+The printed document is built from the same `facts` object the panel and the
+API payload come from, so it carries more than the panel's summary table: full
+assessment fields, all seven model scores with the rank and percentile, every
+context layer including the ones that matched nothing, the brief, the
+generation timestamp, and a sources footer. **Owner and taxpayer names are left
+out**, exactly as they are left out of the API request.
+
+Two printing-only data fixes live in `buildPrintDoc()`: an all-zero `ZIP_CD` is
+dropped rather than printed as "00000", and the last-sale row is suppressed
+unless there is a sale date, so an empty record cannot read as "$0".
+
+### Dev hooks
+
+`NRPCParcelReport.dev` — `loadParcel(lon, lat)`, `showReport(markdown)`,
+`buildPrintDoc()`. Nothing in the UI calls them. They exist so the export path
+can be exercised end to end without an Anthropic key and without spending a
+token: load a real parcel, push a canned brief through the same `showReport()` a
+streamed one ends in, then fill `#pr-print` without opening a modal dialog.
+That is how the sample PDF in the chief-of-staff folder was produced, headless.

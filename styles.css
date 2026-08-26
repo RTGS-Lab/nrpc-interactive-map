@@ -800,3 +800,215 @@ body,
 #parcel-report-panel .hidden {
   display: none;
 }
+
+
+/* ── Parcel Report · export as PDF ───────────────────────────────────────── */
+
+#pr-export-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid #e0e0e0;
+}
+
+#pr-export {
+  background: white;
+  color: #0079c1;
+  border: 1px solid #0079c1;
+  border-radius: 3px;
+  padding: 6px 12px;
+  font-size: 12px;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+#pr-export:hover {
+  background: #eaf4fb;
+}
+
+.pr-export-note {
+  font-size: 10px;
+  color: #888;
+  line-height: 1.4;
+  flex: 1;
+  min-width: 120px;
+}
+
+/* The printable document. Built on demand, never shown on screen. */
+#pr-print {
+  display: none;
+}
+
+/* ── Print ───────────────────────────────────────────────────────────────
+ * Armed by body.pr-print-ready, which "Export as PDF" adds. Without it a
+ * plain Ctrl+P still prints the map exactly as it did before this feature.
+ * With it, everything but #pr-print is hidden: no map, no panel, no controls.
+ */
+
+@page {
+  margin: 0.65in;
+}
+
+@media print {
+  body.pr-print-ready,
+  html:has(body.pr-print-ready) {
+    height: auto !important;
+    min-height: 0 !important;
+    overflow: visible !important;
+    background: #fff !important;
+  }
+
+  body.pr-print-ready > *:not(#pr-print) {
+    display: none !important;
+  }
+
+  body.pr-print-ready #pr-print {
+    display: block !important;
+    position: static !important;
+    width: auto;
+    margin: 0;
+    color: #000;
+    /* Named rather than inherited: the printed page should not depend on the
+       ArcGIS stylesheet having loaded. Same stack Esri's own theme uses. */
+    font-family: "Avenir Next", "Helvetica Neue", Helvetica, Arial, sans-serif;
+    font-size: 10pt;
+    line-height: 1.45;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  #pr-print .pr-print-head {
+    border-bottom: 2px solid #0079c1;
+    padding-bottom: 8pt;
+    margin-bottom: 14pt;
+  }
+
+  #pr-print .pr-print-kicker {
+    font-size: 8pt;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: #0079c1;
+    margin-bottom: 3pt;
+  }
+
+  #pr-print .pr-print-title {
+    font-size: 18pt;
+    font-weight: 600;
+    margin: 0 0 2pt;
+    letter-spacing: -0.01em;
+  }
+
+  #pr-print .pr-print-sub {
+    font-size: 11pt;
+    color: #333;
+  }
+
+  #pr-print .pr-print-meta {
+    font-size: 8pt;
+    color: #666;
+    margin-top: 5pt;
+  }
+
+  /* Sections flow across pages. The atoms that must not split are the table
+     rows, the headings (which stay with what follows them) and the footer —
+     pinning whole sections instead left a third of a page blank whenever the
+     next section would not fit. */
+  #pr-print .pr-print-section {
+    margin-bottom: 14pt;
+  }
+
+  #pr-print h2 {
+    font-size: 9pt;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.07em;
+    color: #0079c1;
+    margin: 0 0 5pt;
+    padding-bottom: 2pt;
+    border-bottom: 0.5pt solid #bbb;
+    break-after: avoid;
+    page-break-after: avoid;
+  }
+
+  #pr-print .pr-print-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 9.5pt;
+  }
+
+  #pr-print .pr-print-table th {
+    width: 30%;
+    text-align: left;
+    font-weight: 600;
+    color: #444;
+    vertical-align: top;
+    padding: 2.5pt 10pt 2.5pt 0;
+  }
+
+  #pr-print .pr-print-table td {
+    vertical-align: top;
+    padding: 2.5pt 0;
+  }
+
+  #pr-print .pr-print-table tr {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
+  #pr-print .pr-print-note {
+    font-size: 8pt;
+    color: #666;
+    line-height: 1.4;
+    margin: 5pt 0 0;
+  }
+
+  #pr-print .pr-print-brief h3,
+  #pr-print .pr-print-brief h4,
+  #pr-print .pr-print-brief h5 {
+    font-size: 9.5pt;
+    font-weight: 600;
+    color: #222;
+    margin: 9pt 0 3pt;
+    break-after: avoid;
+    page-break-after: avoid;
+  }
+
+  #pr-print .pr-print-brief h3:first-child {
+    margin-top: 0;
+  }
+
+  #pr-print .pr-print-brief p {
+    margin: 0 0 6pt;
+    orphans: 3;
+    widows: 3;
+  }
+
+  #pr-print .pr-print-brief ul {
+    margin: 0 0 6pt;
+    padding-left: 14pt;
+  }
+
+  #pr-print .pr-print-brief li {
+    margin-bottom: 3pt;
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
+  /* The provenance block is fine print and may split across a page boundary —
+     pinning it whole was pushing four lines onto a page of their own. */
+  #pr-print .pr-print-foot {
+    margin-top: 16pt;
+    padding-top: 6pt;
+    border-top: 0.5pt solid #bbb;
+    font-size: 7.5pt;
+    color: #666;
+    line-height: 1.4;
+  }
+
+  #pr-print .pr-print-foot p {
+    margin: 0 0 3pt;
+  }
+}
