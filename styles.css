@@ -575,8 +575,10 @@ body,
   position: absolute;
   inset: 0;
   display: none;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
+  gap: 8px;
   text-align: center;
   padding: 20px;
   color: #888;
@@ -688,5 +690,106 @@ body,
   font-size: 12px;
   color: #666;
   font-family: inherit;
+}
+
+/* -- Street View key: entered in the panel, kept in this browser only -- */
+
+#sv-key-form {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0 10px 8px;
+  padding: 10px;
+  border: 1px solid #d8d8d8;
+  border-radius: 4px;
+  background: #fafafa;
+  flex-shrink: 0;
+}
+
+#sv-key-form.hidden {
+  display: none;
+}
+
+.sv-key-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: #323232;
+}
+
+.sv-key-note {
+  font-size: 10px;
+  color: #888;
+  line-height: 1.45;
+}
+
+#sv-key-input {
+  font-size: 12px;
+  font-family: inherit;
+  padding: 6px 7px;
+  border: 1px solid #ccc;
+  border-radius: 3px;
+}
+
+#sv-key-buttons {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+#sv-key-save {
+  background: #0079c1;
+  color: white;
+  border: none;
+  border-radius: 3px;
+  padding: 6px 12px;
+  font-size: 12px;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+#street-view-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 10px;
+  border-top: 1px solid #e0e0e0;
+  flex-shrink: 0;
+  font-size: 11px;
+  font-family: inherit;
+  min-height: 16px;
+}
+
+#sv-key-status {
+  color: #888;
+}
+
+#sv-key-actions {
+  display: flex;
+  gap: 12px;
+  flex-shrink: 0;
+}
+
+.sv-link {
+  background: none;
+  border: none;
+  color: #0079c1;
+  font-size: 11px;
+  font-family: inherit;
+  cursor: pointer;
+  padding: 0;
+  text-decoration: underline;
+}
+
+.sv-link:hover {
+  color: #005a91;
+}
+
+#sv-no-img-key {
+  font-size: 12px;
+}
+
+.sv-link.hidden {
+  display: none;
 }
 

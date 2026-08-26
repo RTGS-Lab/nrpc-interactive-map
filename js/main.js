@@ -1186,22 +1186,73 @@ require([
 
     // ── Street View Panel ─────────────────────────────────────────────────
     //
-    // API key: js/config.js is git-ignored. GitHub Actions writes it at deploy
-    // time from the GOOGLE_STREET_VIEW_API_KEY secret; for local work run
-    //   cp js/config.example.js js/config.js
-    // and paste a key. The key MUST be HTTP-referrer-restricted in the Google
-    // Cloud console — it ships to the browser in a public site.
+    // API key: the user's, not the repo's — the same deal the Parcel Report
+    // makes for its Anthropic key. It is typed into the panel, kept in
+    // localStorage on that one browser, and sent only to maps.googleapis.com.
+    // It is never committed and never logged.
+    //
+    // Resolution order, first hit wins:
+    //   1. localStorage — what the user typed here.
+    //   2. window.STREET_VIEW_API_KEY from js/config.js — still how the
+    //      deployed site gets its key (GitHub Actions writes config.js at
+    //      deploy time from the GOOGLE_STREET_VIEW_API_KEY secret; locally
+    //      `cp js/config.example.js js/config.js`). Any deployed key MUST be
+    //      HTTP-referrer-restricted in the Google Cloud console — it ships to
+    //      the browser in a public site.
+    //   3. Ask, once, in the panel.
     //
     // With no usable key the panel still works: it falls back to the key-free
-    // ArcGIS World Imagery aerial view and says so, instead of throwing a
-    // ReferenceError on the first click.
+    // ArcGIS World Imagery aerial view and says so in one line, instead of
+    // throwing a ReferenceError on the first click.
 
-    const SV_KEY =
-      (typeof STREET_VIEW_API_KEY === "string" &&
+    const SV_STORAGE_KEY = "nrpc-street-view.apiKey";
+
+    function svStoredKey() {
+      try {
+        return (localStorage.getItem(SV_STORAGE_KEY) || "").trim();
+      } catch (_) {
+        // Private mode / blocked storage — behave as if nothing is stored.
+        return "";
+      }
+    }
+
+    function svConfigKey() {
+      return typeof STREET_VIEW_API_KEY === "string" &&
         STREET_VIEW_API_KEY.trim() &&
-        !STREET_VIEW_API_KEY.startsWith("YOUR_"))
+        !STREET_VIEW_API_KEY.startsWith("YOUR_")
         ? STREET_VIEW_API_KEY.trim()
-        : null;
+        : "";
+    }
+
+    // The live key and where it came from. Recomputed whenever the user saves
+    // or clears, so clearing a typed key falls back to config.js rather than
+    // to nothing.
+    let svKey = null;
+    let svKeySource = "none"; // "stored" | "config" | "none"
+
+    function svResolveKey() {
+      const stored = svStoredKey();
+      if (stored) {
+        svKey = stored;
+        svKeySource = "stored";
+        return;
+      }
+      const cfg = svConfigKey();
+      if (cfg) {
+        svKey = cfg;
+        svKeySource = "config";
+        return;
+      }
+      svKey = null;
+      svKeySource = "none";
+    }
+
+    svResolveKey();
+
+    // Asked once per page load, and once declined it stays declined for the
+    // session — clicking the map keeps working, it just stays on aerial.
+    let svKeyAsked = false;
+    let svKeyDeclined = false;
 
     const svPanel = document.createElement("div");
     svPanel.id = "street-view-panel";
@@ -1210,7 +1261,6 @@ require([
     svHeader.id = "street-view-header";
     const svTitle = document.createElement("span");
     svTitle.id = "street-view-title";
-    svTitle.textContent = SV_KEY ? "Street View" : "Aerial View";
     const svClose = document.createElement("button");
     svClose.id = "street-view-close";
     svClose.textContent = "×";
@@ -1233,7 +1283,16 @@ require([
 
     const svNoImg = document.createElement("div");
     svNoImg.id = "street-view-no-img";
-    svNoImg.textContent = "No Street View imagery available near this location.";
+    const svNoImgText = document.createElement("span");
+    svNoImgText.id = "sv-no-img-text";
+    svNoImgText.textContent = "No Street View imagery available near this location.";
+    // Only shown when the message is about the key rather than the imagery.
+    const svNoImgKeyBtn = document.createElement("button");
+    svNoImgKeyBtn.type = "button";
+    svNoImgKeyBtn.id = "sv-no-img-key";
+    svNoImgKeyBtn.className = "sv-link hidden";
+    svNoImgKeyBtn.textContent = "Change key";
+    svNoImg.append(svNoImgText, svNoImgKeyBtn);
 
     const svThumbBtn = document.createElement("button");
     svThumbBtn.id = "sv-thumb-btn";
@@ -1266,27 +1325,114 @@ require([
     svHeadingRow.append(svHeadingLabel, svHeadingInput, svHeadingValue);
     svHeadingRow.style.display = "none";
 
+    // -- key form: an in-panel input, never a window.prompt --
+    const svKeyForm = document.createElement("form");
+    svKeyForm.id = "sv-key-form";
+    svKeyForm.className = "hidden";
+    const svKeyLabel = document.createElement("div");
+    svKeyLabel.className = "sv-key-label";
+    svKeyLabel.textContent = "Google Street View API key";
+    const svKeyInput = document.createElement("input");
+    svKeyInput.type = "password";
+    svKeyInput.id = "sv-key-input";
+    svKeyInput.placeholder = "AIza…";
+    svKeyInput.autocomplete = "off";
+    svKeyInput.spellcheck = false;
+    const svKeyButtons = document.createElement("div");
+    svKeyButtons.id = "sv-key-buttons";
+    const svKeySave = document.createElement("button");
+    svKeySave.type = "submit";
+    svKeySave.id = "sv-key-save";
+    svKeySave.textContent = "Save key";
+    const svKeySkip = document.createElement("button");
+    svKeySkip.type = "button";
+    svKeySkip.id = "sv-key-skip";
+    svKeySkip.className = "sv-link";
+    svKeySkip.textContent = "Not now";
+    svKeyButtons.append(svKeySave, svKeySkip);
+    const svKeyNote = document.createElement("div");
+    svKeyNote.className = "sv-key-note";
+    svKeyNote.textContent =
+      "Kept in this browser's localStorage only. Never committed, never sent " +
+      "anywhere but maps.googleapis.com. Use a referrer-restricted key.";
+    svKeyForm.append(svKeyLabel, svKeyInput, svKeyButtons, svKeyNote);
+
+    // -- footer: the one line that says what the key situation is --
+    const svFooter = document.createElement("div");
+    svFooter.id = "street-view-footer";
+    const svKeyStatus = document.createElement("span");
+    svKeyStatus.id = "sv-key-status";
+    const svKeyActions = document.createElement("span");
+    svKeyActions.id = "sv-key-actions";
+    const svKeySetBtn = document.createElement("button");
+    svKeySetBtn.type = "button";
+    svKeySetBtn.id = "sv-key-set";
+    svKeySetBtn.className = "sv-link";
+    const svKeyClearBtn = document.createElement("button");
+    svKeyClearBtn.type = "button";
+    svKeyClearBtn.id = "sv-key-clear";
+    svKeyClearBtn.className = "sv-link";
+    svKeyClearBtn.textContent = "Clear key";
+    svKeyActions.append(svKeySetBtn, svKeyClearBtn);
+    svFooter.append(svKeyStatus, svKeyActions);
+
     const svTab = document.createElement("button");
     svTab.id = "sv-tab";
-    svTab.title = SV_KEY ? "Toggle Street View" : "Toggle aerial view";
     svTab.textContent = "◀";
 
-    svPanel.append(svHeader, svLocation, svImgWrap, svHeadingRow);
+    svPanel.append(svHeader, svLocation, svImgWrap, svHeadingRow, svKeyForm, svFooter);
     svPanel.appendChild(svTab);
     document.body.appendChild(svPanel);
 
     let svLat = null;
     let svLng = null;
-    let svMode = SV_KEY ? "street" : "aerial";
+    let svMode = svKey ? "street" : "aerial";
 
-    const SV_PROMPT = SV_KEY
-      ? "Click anywhere on the map to load Street View."
-      : "Click anywhere on the map to load aerial imagery.\n" +
-        "No Google Street View key is configured, so street-level photos are unavailable.";
+    function svPromptText() {
+      return svKey
+        ? "Click anywhere on the map to load Street View."
+        : "Click anywhere on the map to load aerial imagery.\n" +
+          "Add a Google Street View key below to enable street-level photos.";
+    }
+
+    // Everything that has to change when the key comes or goes.
+    function svRefreshKeyUi() {
+      svTitle.textContent = svKey ? "Street View" : "Aerial View";
+      svTab.title = svKey ? "Toggle Street View" : "Toggle aerial view";
+      if (svKey) {
+        svKeyStatus.textContent =
+          svKeySource === "config"
+            ? "Street View key from config.js."
+            : "Street View key saved in this browser.";
+        svKeySetBtn.textContent = "Change key";
+        svKeyClearBtn.classList.toggle("hidden", svKeySource !== "stored");
+      } else {
+        svKeyStatus.textContent = "No key — showing aerial imagery.";
+        svKeySetBtn.textContent = "Add key";
+        svKeyClearBtn.classList.add("hidden");
+      }
+    }
+
+    function svShowKeyForm() {
+      svKeyAsked = true;
+      svKeyForm.classList.remove("hidden");
+      svKeyInput.focus();
+    }
+
+    function svHideKeyForm() {
+      svKeyForm.classList.add("hidden");
+      svKeyInput.value = "";
+    }
+
+    function svShowNoImg(text, offerKey) {
+      svNoImgText.textContent = text;
+      svNoImgKeyBtn.classList.toggle("hidden", !offerKey);
+      svNoImg.style.display = "flex";
+    }
 
     function buildStreetViewUrl(lat, lng, heading, size = "640x480") {
-      if (!SV_KEY) return null;
-      return `https://maps.googleapis.com/maps/api/streetview?size=${size}&location=${lat},${lng}&heading=${heading}&fov=90&radius=1000&source=outdoor&return_error_code=true&key=${SV_KEY}`;
+      if (!svKey) return null;
+      return `https://maps.googleapis.com/maps/api/streetview?size=${size}&location=${lat},${lng}&heading=${heading}&fov=90&radius=1000&source=outdoor&return_error_code=true&key=${encodeURIComponent(svKey)}`;
     }
 
     function buildAerialUrl(lat, lng, size = "640x480") {
@@ -1297,7 +1443,7 @@ require([
     }
 
     function showPlaceholder() {
-      svPlaceholder.textContent = SV_PROMPT;
+      svPlaceholder.textContent = svPromptText();
       svPlaceholder.style.display = "flex";
       svImg.style.display = "none";
       svAerialImg.style.display = "none";
@@ -1307,7 +1453,7 @@ require([
     }
 
     function showStreetMode() {
-      if (!SV_KEY) return showAerialMode();
+      if (!svKey) return showAerialMode();
       svMode = "street";
       svPlaceholder.style.display = "none";
       svImg.style.display = "block";
@@ -1326,7 +1472,7 @@ require([
       svImg.style.display = "none";
       svNoImg.style.display = "none";
       svHeadingRow.style.display = "none";
-      if (SV_KEY) {
+      if (svKey) {
         svThumbImg.src = buildStreetViewUrl(svLat, svLng, svHeadingInput.value, "200x150");
         svThumbLabel.textContent = "Street View";
         svThumbBtn.style.display = "flex";
@@ -1334,6 +1480,97 @@ require([
         // Aerial is the only view available, so there is nothing to flip to.
         svThumbBtn.style.display = "none";
       }
+    }
+
+    // Street-mode chrome, but with a message where the photo would be. Used
+    // for both "no imagery here" and "the key was refused" — the thumbnail
+    // stays so the aerial view is one click away either way.
+    function showStreetUnavailable(text, offerKey) {
+      svMode = "street";
+      svPlaceholder.style.display = "none";
+      svImg.style.display = "none";
+      svAerialImg.style.display = "none";
+      svHeadingRow.style.display = "none";
+      svThumbImg.src = buildAerialUrl(svLat, svLng, "200x150");
+      svThumbLabel.textContent = "Aerial";
+      svThumbBtn.style.display = "flex";
+      svShowNoImg(text, offerKey);
+    }
+
+    function showChecking() {
+      svPlaceholder.textContent = "Checking Street View…";
+      svPlaceholder.style.display = "flex";
+      svImg.style.display = "none";
+      svAerialImg.style.display = "none";
+      svNoImg.style.display = "none";
+      svThumbBtn.style.display = "none";
+      svHeadingRow.style.display = "none";
+    }
+
+    // ── Is there a photo here, or is the key the problem? ────────────────
+    //
+    // The Static Street View endpoint answers both questions with the same
+    // HTTP error, so `img.onerror` alone reported a refused key as "no
+    // imagery available" — which sent people looking for a Street View gap
+    // that did not exist. The metadata endpoint says which it is, is free to
+    // call, and is CORS-enabled, so every new location is checked there first
+    // and the image is only requested once metadata says OK.
+    //
+    // Google's own error_message is quoted verbatim: for a referrer-restricted
+    // key it names the referer it saw, which is the fact that fixes it.
+    const SV_META_URL = "https://maps.googleapis.com/maps/api/streetview/metadata";
+
+    // Guards against a slow check for an old click overwriting a newer one.
+    let svMetaToken = 0;
+
+    async function svLoadStreetView(lat, lng) {
+      if (!svKey) return showAerialMode();
+      const token = ++svMetaToken;
+      showChecking();
+
+      let meta = null;
+      try {
+        const url =
+          `${SV_META_URL}?location=${lat},${lng}&radius=1000&source=outdoor` +
+          `&key=${encodeURIComponent(svKey)}`;
+        const res = await fetch(url);
+        meta = await res.json();
+      } catch (_) {
+        // Offline, blocked, or the endpoint is unreachable. Aerial still works.
+        if (token !== svMetaToken) return;
+        showAerialMode();
+        svKeyStatus.textContent = "Could not reach Google — showing aerial imagery.";
+        return;
+      }
+      if (token !== svMetaToken) return;
+
+      const status = meta && meta.status;
+      if (status === "OK") {
+        svImg.src = buildStreetViewUrl(lat, lng, svHeadingInput.value);
+        showStreetMode();
+        return;
+      }
+      if (status === "ZERO_RESULTS" || status === "NOT_FOUND") {
+        showStreetUnavailable(
+          "No Street View imagery available near this location.",
+          false
+        );
+        return;
+      }
+      // REQUEST_DENIED, OVER_QUERY_LIMIT, INVALID_REQUEST, UNKNOWN_ERROR —
+      // all of them are about the key or the account, not the place.
+      const detail = String(
+        (meta && meta.error_message) || status || "unknown error"
+      ).trim();
+      const quota = status === "OVER_QUERY_LIMIT";
+      const lead = quota
+        ? "Street View quota exceeded: "
+        : "Street View key rejected: ";
+      const tail = quota
+        ? " — check the key's billing and quota in the Google Cloud console."
+        : " — check the key's website restrictions.";
+      showStreetUnavailable(lead + detail + tail, true);
+      svKeyStatus.textContent = "Street View key was refused by Google.";
     }
 
     function openPanel() {
@@ -1353,14 +1590,69 @@ require([
       svHeadingValue.textContent = "0°";
       svLocation.textContent = `${lat.toFixed(6)}, ${lng.toFixed(6)}`;
       svAerialImg.src = buildAerialUrl(lat, lng);
-      if (SV_KEY) {
-        svImg.src = buildStreetViewUrl(lat, lng, 0);
-        showStreetMode();
+      if (svKey) {
+        svLoadStreetView(lat, lng);
       } else {
         showAerialMode();
+        // The one ask: first Street View request of the session with no key.
+        if (!svKeyAsked && !svKeyDeclined) svShowKeyForm();
       }
       openPanel();
     }
+
+    // Re-render whatever is on screen under the key we now have.
+    function svRerender() {
+      svRefreshKeyUi();
+      if (svLat === null) {
+        showPlaceholder();
+        return;
+      }
+      if (svKey) {
+        svLoadStreetView(svLat, svLng);
+      } else {
+        svAerialImg.src = buildAerialUrl(svLat, svLng);
+        showAerialMode();
+      }
+    }
+
+    svKeyForm.addEventListener("submit", e => {
+      e.preventDefault();
+      const k = svKeyInput.value.trim();
+      if (!k) return;
+      try {
+        localStorage.setItem(SV_STORAGE_KEY, k);
+      } catch (_) {
+        // Private mode — the key just won't outlive the page.
+      }
+      svKey = k;
+      svKeySource = "stored";
+      svKeyDeclined = false;
+      svHideKeyForm();
+      svRerender();
+    });
+
+    svKeySkip.addEventListener("click", () => {
+      svKeyDeclined = true;
+      svHideKeyForm();
+      svRerender();
+    });
+
+    svNoImgKeyBtn.addEventListener("click", () => svShowKeyForm());
+
+    svKeySetBtn.addEventListener("click", () => {
+      if (svKeyForm.classList.contains("hidden")) svShowKeyForm();
+      else svHideKeyForm();
+    });
+
+    svKeyClearBtn.addEventListener("click", () => {
+      try {
+        localStorage.removeItem(SV_STORAGE_KEY);
+      } catch (_) {}
+      svResolveKey();
+      svHideKeyForm();
+      svRerender();
+      if (!svKey) svKeyStatus.textContent = "Key cleared — showing aerial imagery.";
+    });
 
     svClose.addEventListener("click", closePanel);
 
@@ -1374,8 +1666,9 @@ require([
     });
 
     svImg.addEventListener("error", () => {
+      // Metadata said OK, so this is the image request itself failing.
       svImg.style.display = "none";
-      svNoImg.style.display = "flex";
+      svShowNoImg("The Street View image could not be loaded.", false);
     });
 
     svImg.addEventListener("load", () => {
@@ -1387,8 +1680,7 @@ require([
     svAerialImg.addEventListener("error", () => {
       if (svMode !== "aerial") return;
       svAerialImg.style.display = "none";
-      svNoImg.textContent = "No aerial imagery available for this location.";
-      svNoImg.style.display = "flex";
+      svShowNoImg("No aerial imagery available for this location.", false);
     });
 
     svHeadingInput.addEventListener("input", () => {
@@ -1396,7 +1688,7 @@ require([
     });
 
     svHeadingInput.addEventListener("change", () => {
-      if (svLat !== null && svMode === "street" && SV_KEY) {
+      if (svLat !== null && svMode === "street" && svKey) {
         svImg.src = buildStreetViewUrl(svLat, svLng, svHeadingInput.value);
       }
     });
@@ -1406,6 +1698,7 @@ require([
       else showStreetMode();
     });
 
+    svRefreshKeyUi();
     showPlaceholder();
 
     view.on("click", async (event) => {

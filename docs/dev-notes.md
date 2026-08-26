@@ -100,21 +100,62 @@ aerial mode.
 
 ### The API key
 
-`js/config.js` defines one global, `STREET_VIEW_API_KEY`, and is **git-ignored**.
+The key can be typed into the panel — no `config.js`, no redeploy — which is
+the same deal the Parcel Report makes for its Anthropic key. Resolution order,
+first hit wins:
 
-- **Deploy:** `.github/workflows/deploy.yml` writes it from the repository secret
-  `GOOGLE_STREET_VIEW_API_KEY` before uploading the Pages artifact.
-- **Local:** `cp js/config.example.js js/config.js` and paste a key.
+1. **localStorage**, under `nrpc-street-view.apiKey` — what the user typed into
+   the panel on this browser. Never committed, never logged, sent only to
+   `maps.googleapis.com`.
+2. **`window.STREET_VIEW_API_KEY`** from `js/config.js`, which is
+   **git-ignored**. `.github/workflows/deploy.yml` writes it from the repository
+   secret `GOOGLE_STREET_VIEW_API_KEY` before uploading the Pages artifact;
+   locally, `cp js/config.example.js js/config.js` and paste a key.
+3. **Ask** — on the first Street View request of the session with no key, the
+   panel opens an in-page key form. Declining ("Not now") is remembered for the
+   session and the panel stays on aerial; it does not ask again.
 
-The key is served to every visitor of a public site, so it **must** be
+The footer carries the control: `Add key` / `Change key`, and `Clear key` when
+the key came from localStorage. Clearing a typed key falls back to `config.js`
+rather than to nothing, which is why `Clear key` is hidden when the key is the
+deploy-time one — there is nothing in this browser to clear.
+
+The key entry is an in-page `<input>`, never `window.prompt` — a blocking
+dialog freezes anything driving the page.
+
+Any key is served to every visitor of a public site, so it **must** be
 HTTP-referrer-restricted (to `rtgs-lab.github.io/*`) and limited to the Street
 View Static API in the Google Cloud console. There is no way to hide it — the
 restriction is the control.
 
-If `js/config.js` is missing or still holds the `YOUR_...` placeholder, the panel
-degrades to aerial-only rather than throwing. Never reference
-`STREET_VIEW_API_KEY` directly; use the `SV_KEY` constant, which is `null` when
-no usable key is present.
+With no usable key from any source the panel degrades to aerial-only rather than
+throwing. Never reference `STREET_VIEW_API_KEY` directly; use the `svKey`
+variable, which is `null` when no usable key is present, and re-resolve through
+`svResolveKey()` after any change.
+
+### "No imagery" vs. "bad key"
+
+The Static Street View endpoint answers *no photo here* and *your key is
+refused* with the same HTTP error, so an `img.onerror` handler reported a
+rejected key as "No Street View imagery available near this location" — which
+sent people hunting for a coverage gap that did not exist.
+
+Every new location is therefore checked against the **metadata endpoint** first
+(`/maps/api/streetview/metadata`, CORS-enabled, free), and the image is only
+requested once it answers `OK`:
+
+| metadata `status` | What the panel shows |
+|---|---|
+| `OK` | the Street View image |
+| `ZERO_RESULTS` / `NOT_FOUND` | "No Street View imagery available near this location." |
+| `REQUEST_DENIED` | "Street View key rejected: *<Google's `error_message`, verbatim>* — check the key's website restrictions." plus a **Change key** link |
+| `OVER_QUERY_LIMIT` | "Street View quota exceeded: …" plus **Change key** |
+| anything else | same key-error treatment |
+| fetch throws | aerial view, footer says "Could not reach Google" |
+
+Google's `error_message` is quoted verbatim because for a referrer-restricted
+key it names the referer it actually saw — the one fact that fixes the problem.
+A `svMetaToken` counter discards a slow check whose click has been superseded.
 
 ### Interaction with other panels
 
