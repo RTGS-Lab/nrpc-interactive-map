@@ -1,6 +1,7 @@
 html,
 body,
 #viewDiv {
+  position: relative;
   padding: 0;
   margin: 0;
   height: 100%;
@@ -553,7 +554,8 @@ body,
   flex-shrink: 0;
 }
 
-#street-view-img-wrap {
+/* The stage holds the live panorama; everything else on it is an overlay. */
+#street-view-stage {
   flex: 1;
   position: relative;
   overflow: hidden;
@@ -561,19 +563,37 @@ body,
   min-height: 0;
 }
 
-#street-view-img,
-#street-view-aerial-img {
+/* Google mounts the panorama here and owns everything inside it. */
+#street-view-pano {
   position: absolute;
   inset: 0;
   width: 100%;
   height: 100%;
-  object-fit: cover;
-  display: none;
+}
+
+/* "Imagery: May 2024" — centred at the bottom of the picture, per Bryan. */
+#sv-date-badge {
+  position: absolute;
+  bottom: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 3;
+  background: rgba(0, 0, 0, 0.62);
+  color: white;
+  font-size: 12px;
+  font-family: inherit;
+  letter-spacing: 0.02em;
+  padding: 4px 12px;
+  border-radius: 12px;
+  pointer-events: none;
+  white-space: nowrap;
 }
 
 #street-view-no-img {
   position: absolute;
   inset: 0;
+  z-index: 4;
+  background: #f0f0f0;
   display: none;
   flex-direction: column;
   align-items: center;
@@ -585,11 +605,14 @@ body,
   font-size: 13px;
   font-family: inherit;
   line-height: 1.5;
+  white-space: pre-line;
 }
 
 #sv-placeholder {
   position: absolute;
   inset: 0;
+  z-index: 4;
+  background: #f0f0f0;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -599,6 +622,7 @@ body,
   font-size: 13px;
   font-family: inherit;
   line-height: 1.5;
+  white-space: pre-line;
 }
 
 #sv-tab {
@@ -627,72 +651,141 @@ body,
   color: #222;
 }
 
-#sv-thumb-btn {
-  position: absolute;
-  top: 10px;
-  right: 10px;
-  width: 96px;
-  border: 2px solid white;
-  border-radius: 4px;
-  overflow: hidden;
-  cursor: pointer;
-  padding: 0;
-  background: none;
-  box-shadow: 0 1px 5px rgba(0, 0, 0, 0.45);
-  transition: transform 0.15s ease;
+/* -- other capture dates: chips when Google gives any, a reason when not -- */
+
+#sv-timeline-row {
   display: none;
-  flex-direction: column;
-}
-
-#sv-thumb-btn:hover {
-  transform: scale(1.06);
-}
-
-#sv-thumb-img {
-  width: 96px;
-  height: 72px;
-  display: block;
-  object-fit: cover;
-}
-
-#sv-thumb-label {
-  background: rgba(0, 0, 0, 0.6);
-  color: white;
-  font-size: 10px;
-  font-family: inherit;
-  text-align: center;
-  padding: 3px 0;
-  display: block;
-}
-
-#street-view-heading-row {
-  display: flex;
   align-items: center;
   gap: 8px;
-  padding: 8px 10px;
+  padding: 6px 10px;
   border-top: 1px solid #e0e0e0;
   flex-shrink: 0;
-  font-size: 12px;
-  color: #666;
+  font-size: 11px;
   font-family: inherit;
+  color: #666;
+  min-height: 16px;
 }
 
-#street-view-heading {
-  flex: 1;
-  accent-color: #0079c1;
-  cursor: pointer;
-}
-
-#street-view-heading-value {
-  width: 32px;
-  text-align: right;
+#sv-timeline-label {
+  font-weight: 600;
+  color: #555;
   flex-shrink: 0;
-  font-size: 12px;
-  color: #666;
-  font-family: inherit;
 }
 
-/* -- Street View key: entered in the panel, kept in this browser only -- */
+#sv-timeline-chips {
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  flex: 1;
+}
+
+#sv-timeline-note {
+  color: #aaa;
+  font-style: italic;
+}
+
+#sv-maps-link {
+  color: #0079c1;
+  font-size: 11px;
+  text-decoration: underline;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+#sv-maps-link:hover {
+  color: #005a91;
+}
+
+/* Nothing to click, and the row's title attribute says why. */
+#sv-timeline-row.sv-timeline-empty {
+  color: #aaa;
+  cursor: help;
+}
+
+#sv-timeline-row.sv-timeline-empty #sv-timeline-label {
+  color: #aaa;
+  font-weight: 400;
+}
+
+.sv-date-chip {
+  background: #f2f2f2;
+  border: 1px solid #d8d8d8;
+  border-radius: 11px;
+  color: #333;
+  font-size: 11px;
+  font-family: inherit;
+  padding: 2px 10px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.sv-date-chip:hover {
+  background: #e6f0fa;
+  border-color: #0079c1;
+}
+
+.sv-date-chip.current {
+  background: #0079c1;
+  border-color: #0079c1;
+  color: white;
+  cursor: default;
+}
+
+/* -- the pulsing dot on the map, pinned to the panorama's position -- */
+
+#sv-pulse {
+  position: absolute;
+  width: 0;
+  height: 0;
+  z-index: 2;
+  pointer-events: none;
+}
+
+.sv-pulse-dot,
+.sv-pulse-ring {
+  position: absolute;
+  top: 0;
+  left: 0;
+  border-radius: 50%;
+  transform: translate(-50%, -50%);
+}
+
+.sv-pulse-dot {
+  width: 13px;
+  height: 13px;
+  background: #1a73e8;
+  border: 2px solid white;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.35);
+}
+
+.sv-pulse-ring {
+  width: 13px;
+  height: 13px;
+  border: 2px solid #1a73e8;
+  animation: sv-pulse 1.6s ease-out infinite;
+}
+
+@keyframes sv-pulse {
+  0% {
+    width: 13px;
+    height: 13px;
+    opacity: 0.85;
+  }
+  100% {
+    width: 58px;
+    height: 58px;
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sv-pulse-ring {
+    animation: none;
+    opacity: 0.4;
+  }
+}
+
+/* -- API key: entered in the panel, kept in this browser only -- */
 
 #sv-key-form {
   display: flex;
@@ -792,4 +885,3 @@ body,
 .sv-link.hidden {
   display: none;
 }
-
