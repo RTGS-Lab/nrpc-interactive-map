@@ -1,1 +1,4 @@
 hub_site_content/NRPC-use-cases.md
+
+# Local HTTPS dev certificates — never commit these.
+.dev-certs/

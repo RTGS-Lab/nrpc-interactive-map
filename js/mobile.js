@@ -49,6 +49,9 @@
 
   const GEO_OPTS = { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 };
 
+  // What the desktop's side tab says once it is a mobile chip.
+  const SHEET_CHIP_LABEL = "Parcel report";
+
   // How far the fix has to move before "Follow me" re-selects the parcel.
   // Below this a re-query would usually land on the same PID and cost a round
   // trip on a phone radio for nothing.
@@ -447,11 +450,25 @@
       else bar.appendChild(row);
     }
 
+    // Out of Esri's UI and onto the body — the same trap the report chip fell
+    // into, and a worse one. main.js hands the toolbar to `view.ui.add()`,
+    // which parents it inside `.esri-ui`, and that subtree establishes its own
+    // stacking context. A `z-index: 470` on the drawer is then 470 *within
+    // that subtree*, and the scrim at 450 on the body still paints over it.
+    // The drawer renders correctly dimmed, and every tap meant for a menu item
+    // lands on the scrim and closes it instead: the tools become unreachable.
+    // Verified 2026-08-26 — elementFromPoint over #layers-toggle returned
+    // #mb-scrim. Reparenting to <body> puts drawer, scrim, panels and sheet in
+    // one stacking context where their z-indexes mean what they say.
+    const toolbarEl = document.getElementById("toggle-bar");
+    if (toolbarEl) document.body.appendChild(toolbarEl);
+    const contributeEl = document.getElementById("contribute-wrapper");
+    if (contributeEl) document.body.appendChild(contributeEl);
+
     // Picking a tool closes the drawer. The manager does this too when the
     // tool actually opens; this covers the buttons that toggle something
     // OTHER than a panel (Home), which would otherwise leave the drawer
     // sitting over the result.
-    const toolbarEl = document.getElementById("toggle-bar");
     if (toolbarEl) {
       toolbarEl.addEventListener("click", e => {
         if (e.target.closest("#mb-parcel-layer-row")) return;
@@ -483,9 +500,28 @@
 
     const STOPS = ["peek", "half", "full"];
     let stop = "half";
+
+    /**
+     * Tell the view how much of itself the sheet is sitting on.
+     *
+     * Without this the map centres the fix in the middle of the *element*,
+     * which on a phone is behind the sheet — you tap "use my location", the
+     * report opens, and the blue dot that says where you are is under it.
+     * `view.padding` moves the effective centre into the strip of map you can
+     * actually see, and goTo honours it.
+     */
+    function syncViewPadding() {
+      const open = panel.classList.contains("open");
+      const h = open ? Math.round(panel.getBoundingClientRect().height) : 0;
+      // Never give away more than half the map, however tall the sheet is.
+      view.padding = { ...view.padding, bottom: Math.min(h, Math.round(view.height * 0.55)) };
+    }
+
     function setStop(name) {
       stop = name;
       STOPS.forEach(s => setClass(panel, "mb-" + s, s === name));
+      // After the class has been applied, so the height read is the new one.
+      requestAnimationFrame(syncViewPadding);
     }
     setStop("half");
 
@@ -505,7 +541,10 @@
     });
     grip.addEventListener("pointermove", e => {
       if (!dragFrom) return;
-      const dy = e.clientY - dragFrom.y;
+      // Clamped here rather than in CSS. The sheet is anchored to the bottom
+      // edge, so a negative offset would only open a gap beneath it — an
+      // up-drag changes the stop on release instead.
+      const dy = Math.max(0, e.clientY - dragFrom.y);
       panel.style.setProperty("--mb-drag", dy + "px");
     });
     function endDrag(e) {
@@ -565,6 +604,9 @@
     function syncSheetChip() {
       const open = panel.classList.contains("open");
       setClass(api.tab, "mb-chip-hidden", open || !api.hasFacts());
+      // openPanel()/closePanel() rewrite the tab's label to the desktop's
+      // ▶/◀ arrows. On mobile it is a chip with a name, so put the name back.
+      if (api.tab.textContent !== SHEET_CHIP_LABEL) api.tab.textContent = SHEET_CHIP_LABEL;
     }
     new MutationObserver(() => {
       const open = panel.classList.contains("open");
@@ -575,9 +617,16 @@
       }
       sheetWasOpen = open;
       syncSheetChip();
+      requestAnimationFrame(syncViewPadding);
     }).observe(panel, { attributes: true, attributeFilter: ["class"] });
-    api.tab.textContent = "Parcel report";
+    api.tab.textContent = SHEET_CHIP_LABEL;
     setClass(api.tab, "mb-chip-hidden", true);
+    // Out of the panel and onto the body. The chip is position:fixed, but a
+    // transformed ancestor becomes the containing block for fixed descendants
+    // — and the closed sheet is exactly that, translateY(100%). Left where the
+    // desktop puts it, the chip rides off the bottom of the screen with the
+    // sheet it is supposed to bring back.
+    document.body.appendChild(api.tab);
 
     // ── the locate path ─────────────────────────────────────────────────────
 
@@ -633,6 +682,10 @@
         view.goTo({ center: [lon, lat], zoom: 17 }).catch(() => {});
         api.beginLoad();
         setStop("half");
+        // Re-issue the goTo once the sheet's padding is in effect: the first
+        // one aimed at the middle of the whole view, which is now behind the
+        // sheet.
+        requestAnimationFrame(() => view.goTo({ center: [lon, lat], zoom: 17 }).catch(() => {}));
         const feature = await api.fetchParcelAt(lon, lat);
         if (!feature) {
           say(

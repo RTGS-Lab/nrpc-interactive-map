@@ -374,3 +374,150 @@ can be exercised end to end without an Anthropic key and without spending a
 token: load a real parcel, push a canned brief through the same `showReport()` a
 streamed one ends in, then fill `#pr-print` without opening a modal dialog.
 That is how the sample PDF in the chief-of-staff folder was produced, headless.
+
+---
+
+## Mobile — the parcel you are standing on (branch `mobile`)
+
+Branched from `parcel-report` at df482bb. One tap on a phone uses the device's
+location to select the parcel you are standing on and opens the same context a
+desktop click opens: facts, seven model scores and county rank, nine context
+layers, shared opportunities by adjacency tier, the LLM brief, the PDF export.
+
+### What is mobile, and what is not
+
+`js/mobile.js` decides. `init()` returns immediately unless
+`(max-width: 768px)` or `(pointer: coarse)` matches — `?mobile=1` / `?mobile=0`
+overrides it for testing. Detection is by viewport and pointer, never by
+user-agent string.
+
+Everything the feature styles is gated on a single `nrpc-mobile` class that
+`init()` puts on `<html>`. Nothing in the mobile CSS can reach the desktop
+layout even by accident, because on a desktop the class is never added.
+
+The desktop path is untouched: same `view.on("click")` handler, same pipeline,
+same panel.
+
+### The seam
+
+`parcel-report.js` used to have one `loadParcel(lon, lat)`. It is now three:
+
+| function | does |
+|---|---|
+| `beginLoad()` | reset the panel to "loading", start the clock |
+| `selectParcelFeature(feature, lon, lat)` | outline it, assemble facts, render |
+| `loadParcel(lon, lat)` | `beginLoad()` → fetch the parcel at the point → `selectParcelFeature()` |
+
+The desktop click and the mobile locate both end in `selectParcelFeature()`, so
+the two paths cannot drift. `init()` publishes them, plus the panel nodes, as
+`window.NRPCParcelReport.api`, and calls `window.NRPCMobile.init(api)` at the
+end of its own setup. `main.js` is unchanged.
+
+### Location
+
+`navigator.geolocation.getCurrentPosition` with `enableHighAccuracy: true`,
+a 10 s timeout and `maximumAge: 0`, always from a button press — browsers, iOS
+Safari especially, will not prompt outside a user gesture.
+
+The accuracy radius is drawn as a polygon and stated in words ("accurate to
+about 12 m"). A blue dot on a grey basemap does not tell anyone whether the
+report they are about to read is about the parcel they are standing on; the
+radius does. Above 100 m the line turns amber and a "no parcel here" message
+says the fix was probably the culprit.
+
+"Follow me" is `watchPosition`, off by default — high-accuracy watching holds
+the GPS on and this gets opened in the field on a battery that has to last the
+site visit. When on, the dot tracks every fix but the parcel is re-selected
+only once the fix has moved more than 30 m, because a metre of GPS jitter must
+not cost a round trip. It is cleared on `visibilitychange` and restored when
+the page comes back.
+
+Every failure gets plain language, including the one the error codes miss: an
+`http://` origin, where the API exists and always fails. Each message ends with
+"tap the map to pick a parcel by hand", which still works.
+
+### No parcel layer on a phone
+
+The webmap's Boundaries ▸ Parcels layer is the Hennepin Parcel Base — 445,517
+features — and it is the slowest thing on screen over a phone radio. The locate
+path never needs it: the parcel is one REST query at the point, drawn as a
+single graphic. So it is switched off at init (matched by service URL, not by
+title, which is editable in ArcGIS Online) and there is a "Parcel outlines"
+toggle in the drawer to put it back.
+
+### Menu management: one surface, always
+
+On a 1440px desktop the toolbar's six tools are independent widgets and it does
+not matter that two can be open at once. At 390px it matters: two open panels
+cover the map completely, including the position dot. So on mobile the six
+tools, the drawer and the report sheet are ONE stack with one rule — exactly
+one is open at a time.
+
+The manager does not reimplement `main.js`'s open/close logic. Every tool
+represents "open" the same way — `hidden` off the panel, `active` on its
+button — so a `MutationObserver` per tool enforces exclusivity *around* the
+desktop handlers, which still own opening and closing. What the manager owns is
+what else must close, and how the result is sized for a phone: the `mb-surface`
+class re-anchors it full width above the locate bar with a capped height,
+overriding the inline `top`/`left` `main.js` computed from a toolbar button
+that was inside the drawer being closed.
+
+- Landing is a clear map: hamburger, "Use my location", "Follow me".
+- The hamburger is the way in and the way out — if anything covers the map it
+  closes that first.
+- Selecting a parcel closes any open tool. The sheet wins.
+- A closed sheet stays recoverable: the desktop's side tab becomes a "Parcel
+  report" chip above the locate bar, appended to `<body>` rather than left
+  inside the panel — a transformed ancestor is the containing block for
+  `position: fixed` descendants, so left in place the chip rides off-screen
+  with the sheet it exists to bring back.
+- Escape and the back gesture each close one layer.
+
+**The bug this cost, worth knowing before writing another observer:**
+`classList.add()` on a token that is already present still rewrites the class
+attribute, and a rewritten attribute still queues a `MutationRecord`. An
+observer that "closes what is already closed" therefore wakes itself, and six
+observers that close each other wake each other forever inside the microtask
+queue. It does not throw and it does not log — it freezes the renderer before
+first paint. Instrumented 2026-08-26: all six observers hit a 300-callback
+debug cap during page load and the tab stopped answering CDP. Every class write
+in the manager now goes through `setClass()`, which writes only on a real
+change.
+
+### The sheet
+
+The desktop's right-hand panel becomes a bottom sheet with three stops — peek
+30%, half 58%, full 93% of `100dvh` (`100vh` fallback; the difference is the
+collapsing URL bar). A grip drags between them and taps cycle. Only the grip
+takes pointer capture, so `#pr-body` keeps its own scrolling. Heights use `dvh`
+because `100vh` on a phone includes the URL bar and puts the sheet's bottom
+edge underneath it.
+
+### Testing without a phone
+
+Chrome device emulation is not reachable through the extension, so
+`mobile-harness.html` loads the app in a 390×844 iframe. Media queries inside
+an iframe evaluate against the iframe's viewport, so the real detection fires
+rather than being forced.
+
+Two traps, both cost time:
+
+1. **A background tab freezes CSS transitions mid-flight.** The sheet and the
+   drawer then measure as stuck part-way — off-screen, in the sheet's case, so
+   a wheel aimed at it hits the map and "the sheet does not scroll" looks like
+   a bug in the sheet. Inject
+   `*{transition:none!important;animation:none!important}` before measuring or
+   screenshotting anything.
+2. **Geolocation must be mocked, not prompted.** The permission prompt is
+   browser chrome and cannot be driven. Replace `navigator.geolocation` with a
+   stub that calls back with a known point.
+
+### HTTPS
+
+`serve-mobile.sh` serves the repo over TLS on the LAN so a real phone can use
+geolocation at all — it is a secure-context API, and a phone is never on
+localhost. It generates a self-signed certificate with `openssl` (or `mkcert`
+if installed) into `.dev-certs/`, which it adds to `.gitignore` itself; the
+`subjectAltName` carries the LAN IP, because every current browser ignores CN.
+It prints the URL and a QR code if `qrencode` is present. Accept the
+certificate warning once per device.

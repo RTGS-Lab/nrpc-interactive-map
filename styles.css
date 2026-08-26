@@ -1236,6 +1236,24 @@ html.nrpc-mobile {
    Same DOM as the desktop panel. Only the geometry changes: three stops up
    from the bottom edge instead of a slide-in from the right. */
 
+/* ── The stacking ladder ──────────────────────────────────────────────────
+   All of these are children of <body>, deliberately: js/mobile.js reparents
+   the toolbar and the contribute panel out of `.esri-ui`, which establishes
+   its own stacking context and would otherwise trap them beneath the scrim.
+   In one context the numbers mean what they say.
+
+       300  locate bar, fix line          (under everything it can be under)
+       310  "Parcel report" chip
+       440  legend / layers stack
+       450  scrim
+       460  the open tool panel (.mb-surface)
+       470  the drawer (#toggle-bar)
+       480  the report sheet
+       500  the hamburger — always reachable, over everything but a message
+       600  toast
+
+   Change one, re-read the list. */
+
 html.nrpc-mobile #parcel-report-panel {
   top: auto;
   bottom: 0;
@@ -1251,14 +1269,11 @@ html.nrpc-mobile #parcel-report-panel {
   transform: translateY(calc(100% + 2px));
   transition: transform 0.28s ease, height 0.28s ease;
   padding-bottom: env(safe-area-inset-bottom, 0px);
-  z-index: 400;
+  z-index: 480;
 }
 
 html.nrpc-mobile #parcel-report-panel.open {
-  /* Clamped at 0: the sheet is anchored to the bottom edge, so a drag upward
-     would only open a gap beneath it. Up-drags change the stop on release
-     instead. */
-  transform: translateY(max(0px, var(--mb-drag, 0px)));
+  transform: translateY(var(--mb-drag, 0px));
 }
 
 html.nrpc-mobile #parcel-report-panel.mb-peek {
@@ -1368,7 +1383,9 @@ html.nrpc-mobile #pr-tab {
   position: fixed;
   top: auto;
   right: 12px;
-  bottom: calc(92px + env(safe-area-inset-bottom, 0px));
+  /* Above the fix line, which is itself above the locate bar. The three stack
+     upward from the bottom edge and none of them covers another. */
+  bottom: calc(126px + env(safe-area-inset-bottom, 0px));
   left: auto;
   transform: none;
   width: auto;
@@ -1415,6 +1432,15 @@ html.nrpc-mobile .mb-surface {
   overflow: hidden !important;
   display: flex !important;
   flex-direction: column !important;
+}
+
+/* The three .panel tools (layers, legend, contribute) are flex columns whose
+   list fills the remaining space — `flex: 1; min-height: 0`. Given height:auto
+   that remaining space is zero and the panel collapses to its title bar, which
+   is exactly what it did. They get a real height; the dropdowns, which are
+   short by nature, keep auto. */
+html.nrpc-mobile .panel.mb-surface {
+  height: min(62vh, 520px) !important;
 }
 
 /* The dropdowns are plain divs, not .panel flex columns; they need their own
@@ -1642,7 +1668,9 @@ html.nrpc-mobile #mb-toast {
   position: fixed;
   left: 12px;
   right: 12px;
-  top: calc(12px + env(safe-area-inset-top, 0px));
+  /* Below the hamburger, not over it. A message that covers the only
+     always-visible control is a message you cannot dismiss. */
+  top: calc(68px + env(safe-area-inset-top, 0px));
   z-index: 600;
   padding: 12px 14px;
   border-radius: 10px;
@@ -1733,9 +1761,20 @@ html.nrpc-mobile #toggle-bar {
     calc(16px + env(safe-area-inset-bottom, 0px));
   border-radius: 0;
   overflow-y: auto;
+  /* The drawer is a fixed 250px column holding controls the desktop laid out
+     in a row; anything that keeps its natural width — a long button label, the
+     Clip & Zip row — pushes a horizontal scrollbar along the bottom edge.
+     Clamp here and size the children below. */
+  overflow-x: hidden;
+  box-sizing: border-box;
   transform: translateX(-102%);
   transition: transform 0.25s ease;
   box-shadow: 4px 0 18px rgba(0, 0, 0, 0.22);
+}
+
+html.nrpc-mobile #toggle-bar * {
+  max-width: 100%;
+  box-sizing: border-box;
 }
 
 html.nrpc-mobile.mb-menu-open #toggle-bar {
@@ -1819,7 +1858,7 @@ html.nrpc-mobile .esri-ui-top-right {
 html.nrpc-mobile #basemap-dropdown,
 html.nrpc-mobile #city-dropdown-list,
 html.nrpc-mobile #clip-zip-dropdown {
-  z-index: 480;
+  z-index: 460;
   max-width: calc(100vw - 24px);
 }
 
