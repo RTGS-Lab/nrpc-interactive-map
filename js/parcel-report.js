@@ -1,9 +1,10 @@
 /* ──────────────────────────────────────────────────────────────────────────
  * Parcel Report
  *
- * Click a parcel → a panel of the facts we can pull for it → "Generate report"
- * → a written site summary from Claude, streamed into the panel → "Export as
- * PDF", which prints a clean, map-free version of the whole thing.
+ * Click a parcel → a panel of the facts we can pull for it, including the
+ * opportunities NRPC coalition members have contributed on or near it →
+ * "Generate report" → a written site summary from Claude, streamed into the
+ * panel → "Export as PDF", which prints a clean, map-free version of it all.
  *
  * Self-contained: no build step, no bundler, no dependency beyond what
  * index.html already loads. main.js hands us the view; everything else in here
@@ -115,6 +116,98 @@
     },
   ];
 
+  // ── Shared opportunities ─────────────────────────────────────────────────
+  //
+  // The five feature layers under the webmap's "NRPC Data" group that hold
+  // what coalition members themselves put on the map — as opposed to the
+  // county / Met Council / DNR layers above, which are published datasets.
+  //
+  // The first two are the layers the Contribute panel's Editor widget writes
+  // to (main.js turns the "NRPC Opportunity Layers" group on when Contribute
+  // opens). The other three are the April 2025 Winter Workshop layers, which
+  // carry the identical contribution schema and are where every opportunity
+  // recorded so far actually lives.
+  //
+  // Verified against the live service metadata on 2026-08-26:
+  //   NRPC_Opportunity_Layer/1  polygon   0 features
+  //   NRPC_Opportunity_Layer/0  point     0 features
+  //   Winter_Workshop_Activity_1/0        point      162 features
+  //   Winter_Workshop_Activity_2/1        polygon     21 features
+  //   Winter_Workshop_Activity_2/0        polyline    49 features
+  //
+  // There is NO "opportunity type" field anywhere in these schemas. The layer
+  // a contribution sits in is the only type distinction the data carries, so
+  // `label` is what the report calls the type. Do not invent one.
+  const NRPC_OPP_SERVICE =
+    "https://services.arcgis.com/8df8p0NlLFEShl0r/arcgis/rest/services";
+
+  const OPPORTUNITY_LAYERS = [
+    {
+      key: "oppPolygon",
+      label: "Opportunity area (polygon)",
+      source: "NRPC Opportunity Layers",
+      url: NRPC_OPP_SERVICE + "/NRPC_Opportunity_Layer/FeatureServer/1",
+      geometry: "polygon",
+      schema: "opportunity",
+    },
+    {
+      key: "oppPoint",
+      label: "Opportunity area (point)",
+      source: "NRPC Opportunity Layers",
+      url: NRPC_OPP_SERVICE + "/NRPC_Opportunity_Layer/FeatureServer/0",
+      geometry: "point",
+      schema: "opportunity",
+    },
+    {
+      key: "workshop1",
+      label: "Winter Workshop 2025 — opportunity",
+      source: "Winter Workshop 2025, Activity 1",
+      url: NRPC_OPP_SERVICE + "/Winter_Workshop_Activity_1/FeatureServer/0",
+      geometry: "point",
+      schema: "opportunity",
+    },
+    {
+      key: "workshop2physical",
+      label: "Winter Workshop 2025 — physical connection",
+      source: "Winter Workshop 2025, Activity 2",
+      url: NRPC_OPP_SERVICE + "/Winter_Workshop_Activity_2/FeatureServer/1",
+      geometry: "polygon",
+      schema: "connection",
+    },
+    {
+      key: "workshop2thematic",
+      label: "Winter Workshop 2025 — thematic connection",
+      source: "Winter Workshop 2025, Activity 2",
+      url: NRPC_OPP_SERVICE + "/Winter_Workshop_Activity_2/FeatureServer/0",
+      geometry: "polyline",
+      schema: "connection",
+    },
+  ];
+
+  // Fields shared by both contribution schemas, then the ones each adds. The
+  // labels are shortened from the layers' own aliases, which are the full
+  // survey questions ("Is the opportunity feasible in the next 3 years?").
+  const OPP_COMMON_FIELDS = ["OBJECTID", "name", "organization", "describe_opportunity", "potential_funder", "CreationDate"];
+  const OPP_SCHEMA_FIELDS = {
+    opportunity: ["three_years", "easy_start", "what_smooth", "what_challenging"],
+    connection: ["connection_needs", "rate_priority", "rate_feasibility"],
+  };
+
+  // What each extra field is called in the report, in the order it reads best.
+  const OPP_DETAIL_LABELS = [
+    ["feasibleInThreeYears", "Feasible in 3 years"],
+    ["easeOfStart", "Ease of starting (1 easy – 5 hard)"],
+    ["priorityRating", "Priority (1 low – 5 high)"],
+    ["feasibilityRating", "Feasibility (1 low – 5 high)"],
+    ["whatGoesSmoothly", "Expected to go smoothly"],
+    ["whatIsChallenging", "Expected to be challenging"],
+    ["connectionNeeds", "Needed to make the connection"],
+    ["potentialFunder", "Potential funder"],
+  ];
+
+  // A slow or unreachable contribution layer must never hold up the report.
+  const OPP_TIMEOUT_MS = 12000;
+
   // Model score fields, in the order they read best. Aliases are the layer's
   // own published aliases — not our invention.
   const SCORE_FIELDS = [
@@ -177,13 +270,30 @@
       .replace(/>/g, "&gt;");
   }
 
-  async function esriQuery(url, params) {
+  async function esriQuery(url, params, timeoutMs) {
     const body = new URLSearchParams({ f: "json", ...params });
-    const res = await fetch(url + "/query", {
-      method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body,
-    });
+    // A per-request deadline, so one wedged service cannot hold the panel
+    // open forever. Without a timeout the fetch just sits there.
+    let ctl = null;
+    let timer = null;
+    if (timeoutMs) {
+      ctl = new AbortController();
+      timer = setTimeout(() => ctl.abort(), timeoutMs);
+    }
+    let res;
+    try {
+      res = await fetch(url + "/query", {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body,
+        signal: ctl ? ctl.signal : undefined,
+      });
+    } catch (e) {
+      if (e.name === "AbortError") throw new Error(`${url} → timed out after ${timeoutMs / 1000}s`);
+      throw e;
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
     if (!res.ok) throw new Error(`${url} → HTTP ${res.status}`);
     const json = await res.json();
     // ArcGIS reports failures inside a 200 response.
@@ -215,6 +325,85 @@
       xmax: bbox.xmax + dLon,
       ymax: bbox.ymax + dLat,
     };
+  }
+
+  // ── Distance, in metres, without a geometry engine ────────────────────────
+  //
+  // The map's geometryEngine is loaded in main.js and this file deliberately
+  // does not ask for it — the whole feature is meant to drop out with one
+  // script tag. Over a parcel and its 250 m neighbourhood, a local
+  // equirectangular projection is accurate to well under a metre, so the
+  // arithmetic below is enough and is the same 111320 m/degree constant
+  // padBBox() already uses.
+  //
+  // Only ever called on features the server has already told us do NOT
+  // intersect the parcel, so the minimum boundary-to-boundary distance is the
+  // true distance: no containment case to worry about.
+
+  const MAX_VERTICES = 1500; // guard against a pathological geometry
+
+  // esri geometry → an array of vertex arrays in lon/lat, whatever its type.
+  function geometryParts(g) {
+    if (!g) return [];
+    if (typeof g.x === "number" && typeof g.y === "number") return [[[g.x, g.y]]];
+    if (g.rings) return g.rings;
+    if (g.paths) return g.paths;
+    return [];
+  }
+
+  // Thin a part down to at most `max` vertices, always keeping the ends.
+  function thin(part, max) {
+    if (part.length <= max) return part;
+    const step = Math.ceil(part.length / max);
+    const out = part.filter((_, i) => i % step === 0);
+    if (out[out.length - 1] !== part[part.length - 1]) out.push(part[part.length - 1]);
+    return out;
+  }
+
+  function projectParts(parts, lat0) {
+    const kx = 111320 * Math.cos((lat0 * Math.PI) / 180);
+    return parts
+      .filter(p => p && p.length)
+      .map(p => thin(p, MAX_VERTICES).map(([x, y]) => [x * kx, y * 111320]));
+  }
+
+  function pointToSegment(px, py, ax, ay, bx, by) {
+    const dx = bx - ax;
+    const dy = by - ay;
+    const len2 = dx * dx + dy * dy;
+    if (!len2) return Math.hypot(px - ax, py - ay);
+    let t = ((px - ax) * dx + (py - ay) * dy) / len2;
+    t = t < 0 ? 0 : t > 1 ? 1 : t;
+    return Math.hypot(px - (ax + t * dx), py - (ay + t * dy));
+  }
+
+  // Every vertex of A against every segment of B. Called both ways round by
+  // minDistanceM, which is what makes it a real minimum rather than an
+  // upper bound.
+  function vertsToSegs(A, B) {
+    let best = Infinity;
+    for (const pa of A) {
+      for (const [px, py] of pa) {
+        for (const pb of B) {
+          if (pb.length === 1) {
+            best = Math.min(best, Math.hypot(px - pb[0][0], py - pb[0][1]));
+            continue;
+          }
+          for (let i = 0; i < pb.length - 1; i++) {
+            best = Math.min(best, pointToSegment(px, py, pb[i][0], pb[i][1], pb[i + 1][0], pb[i + 1][1]));
+          }
+        }
+      }
+    }
+    return best;
+  }
+
+  function minDistanceM(geomA, geomB, lat0) {
+    const A = projectParts(geometryParts(geomA), lat0);
+    const B = projectParts(geometryParts(geomB), lat0);
+    if (!A.length || !B.length) return null;
+    const d = Math.min(vertsToSegs(A, B), vertsToSegs(B, A));
+    return isFinite(d) ? d : null;
   }
 
   // ── Data assembly ────────────────────────────────────────────────────────
@@ -277,6 +466,163 @@
     return Promise.all(jobs);
   }
 
+  // ── Shared opportunities ─────────────────────────────────────────────────
+
+  // Hennepin's date fields come back as epoch ms; the hosted contribution
+  // layers sometimes hand back an ISO string instead. Take either, print the
+  // day only — the time a form was submitted at a workshop is noise.
+  function contributedOn(v) {
+    if (v === null || v === undefined || v === "") return null;
+    const d = typeof v === "number" ? new Date(v) : new Date(String(v));
+    return isNaN(d.getTime()) ? null : d.toISOString().slice(0, 10);
+  }
+
+  // One contributed feature, in the shape the panel, the print view and the
+  // model payload all read from.
+  function opportunityRow(layer, attrs, relation, distanceMetres) {
+    const a = attrs || {};
+    return {
+      id: layer.key + ":" + a.OBJECTID,
+      type: layer.label,
+      source: layer.source,
+      geometryType: layer.geometry,
+      organization: clean(a.organization),
+      // Kept for the panel and the printed page. Stripped from the API
+      // payload — see stripOpportunityContributors().
+      contributor: clean(a.name),
+      description: clean(a.describe_opportunity),
+      feasibleInThreeYears: clean(a.three_years),
+      easeOfStart: num(a.easy_start),
+      priorityRating: num(a.rate_priority),
+      // The polygon layer publishes rate_feasibility as a string while the
+      // polyline layer publishes it as an integer. Same question, two types.
+      feasibilityRating: num(a.rate_feasibility) ?? clean(a.rate_feasibility),
+      whatGoesSmoothly: clean(a.what_smooth),
+      whatIsChallenging: clean(a.what_challenging),
+      connectionNeeds: clean(a.connection_needs),
+      potentialFunder: clean(a.potential_funder),
+      contributedOn: contributedOn(a.CreationDate),
+      relation,
+      distanceMetres,
+    };
+  }
+
+  /**
+   * What coalition members have put on the map on or near this parcel.
+   *
+   * Two queries per layer, because the two questions are different ones:
+   *
+   *   1. intersects the parcel polygon exactly  → "on the parcel"
+   *   2. within `bufferM` of the parcel polygon → everything in range
+   *
+   * (2) minus (1) is "nearby", and its distance is measured here in JS from
+   * the returned geometry. The server does the topology, which is the part
+   * worth trusting it with; we do the arithmetic, which it will not report.
+   *
+   * A layer that errors, times out or is empty produces an entry in
+   * `status` and nothing else. Nothing here can reject: the report is more
+   * important than this section.
+   */
+  async function fetchOpportunities(parcelGeometry, bufferM, lat0) {
+    const geometry = JSON.stringify({
+      rings: parcelGeometry.rings,
+      spatialReference: { wkid: 4326 },
+    });
+
+    const jobs = OPPORTUNITY_LAYERS.map(async layer => {
+      const outFields = OPP_COMMON_FIELDS.concat(OPP_SCHEMA_FIELDS[layer.schema]).join(",");
+      const base = {
+        geometry,
+        geometryType: "esriGeometryPolygon",
+        inSR: "4326",
+        spatialRel: "esriSpatialRelIntersects",
+        outFields,
+        resultRecordCount: "25",
+      };
+      try {
+        const [onJson, nearJson] = await Promise.all([
+          esriQuery(layer.url, { ...base, returnGeometry: "false" }, OPP_TIMEOUT_MS),
+          esriQuery(
+            layer.url,
+            {
+              ...base,
+              distance: String(bufferM),
+              units: "esriSRUnit_Meter",
+              returnGeometry: "true",
+              outSR: "4326",
+            },
+            OPP_TIMEOUT_MS
+          ),
+        ]);
+
+        const onFeatures = onJson.features || [];
+        const onIds = new Set(onFeatures.map(f => f.attributes.OBJECTID));
+        const rows = onFeatures.map(f => opportunityRow(layer, f.attributes, "on the parcel", 0));
+
+        (nearJson.features || []).forEach(f => {
+          if (onIds.has(f.attributes.OBJECTID)) return;
+          const d = minDistanceM(f.geometry, parcelGeometry, lat0);
+          rows.push(
+            opportunityRow(layer, f.attributes, "nearby", d === null ? null : Math.round(d))
+          );
+        });
+
+        return { layer, rows, error: null, truncated: onFeatures.length >= 25 };
+      } catch (e) {
+        return { layer, rows: [], error: e.message, truncated: false };
+      }
+    });
+
+    const results = await Promise.all(jobs);
+    const all = [];
+    results.forEach(r => all.push(...r.rows));
+
+    // On the parcel first, then by how far away, then by organization so the
+    // order is stable between two loads of the same parcel.
+    const rank = r => (r.relation === "on the parcel" ? 0 : 1);
+    all.sort(
+      (a, b) =>
+        rank(a) - rank(b) ||
+        (a.distanceMetres ?? 1e9) - (b.distanceMetres ?? 1e9) ||
+        String(a.organization || "").localeCompare(String(b.organization || ""))
+    );
+
+    return {
+      bufferMetres: bufferM,
+      note:
+        "Opportunities are what NRPC coalition members contributed to the map themselves. " +
+        "'On the parcel' means the contributed geometry intersects the parcel boundary; " +
+        "'nearby' is the straight-line distance from the parcel boundary to the nearest " +
+        "point of the contribution. These are proposals and observations, not commitments.",
+      items: all,
+      onParcelCount: all.filter(r => r.relation === "on the parcel").length,
+      nearbyCount: all.filter(r => r.relation === "nearby").length,
+      organizations: [...new Set(all.map(r => r.organization).filter(Boolean))],
+      layerStatus: results.map(r => ({
+        layer: r.layer.label,
+        source: r.layer.source,
+        error: r.error,
+        count: r.rows.length,
+        truncated: r.truncated,
+      })),
+      unavailable: results.filter(r => r.error).map(r => r.layer.label),
+    };
+  }
+
+  // Contributor names are real people who filled in a workshop form. The
+  // organization is the actionable field for a brief; the individual is not,
+  // so they go to the panel and the printed page but never to the model —
+  // the same call the owner-name fields already make.
+  function stripOpportunityContributors(opps) {
+    if (!opps) return opps;
+    return {
+      ...opps,
+      items: opps.items.map(({ contributor, ...rest }) => rest),
+      contributorNamesWithheld:
+        "Names of the individuals who contributed each opportunity were withheld from this request.",
+    };
+  }
+
   /**
    * Everything we know about the clicked parcel, in one plain object. This is
    * both what the panel renders and (minus the owner fields, unless asked)
@@ -288,10 +634,19 @@
     const a = feature.attributes;
     const bbox = feature.geometry ? ringsBBox(feature.geometry) : null;
 
-    const [scores, context, total] = await Promise.all([
+    const midLat = bbox ? (bbox.ymin + bbox.ymax) / 2 : lat;
+
+    const [scores, context, total, opportunities] = await Promise.all([
       fetchModelScores(a.PID),
       bbox ? fetchContext(padBBox(bbox, CONTEXT_BUFFER_M)) : Promise.resolve([]),
       modelTotal(),
+      // Same 250 m as the context layers, but measured from the parcel
+      // boundary itself rather than from a padded bounding box — these are
+      // few enough to buffer properly, and a distance in metres is the whole
+      // point of the section.
+      feature.geometry && feature.geometry.rings
+        ? fetchOpportunities(feature.geometry, CONTEXT_BUFFER_M, midLat).catch(() => null)
+        : Promise.resolve(null),
     ]);
 
     // PARCEL_AREA is square feet: for PID 1111823340002 it reads 880848.5 while
@@ -369,6 +724,7 @@
         names: [...new Set(rows.map(r => clean(r[layer.nameField])).filter(Boolean))],
         detail: rows.slice(0, 4),
       })),
+      sharedOpportunities: opportunities,
     };
   }
 
@@ -381,7 +737,9 @@
     "",
     "You will be given a JSON object of everything the map could pull for one parcel:",
     "county assessment attributes, the Hennepin County Parcel Prioritization Model",
-    "scores, and the natural-resource layers that fall on or near the parcel.",
+    "scores, the natural-resource layers that fall on or near the parcel, and the",
+    "opportunities NRPC coalition members have themselves contributed to the map on or",
+    "near it.",
     "",
     "Rules:",
     "- Use ONLY the supplied JSON. Do not add facts, history, ecology, or numbers from",
@@ -390,10 +748,16 @@
     "- Context layers were matched against the parcel's bounding box padded by the given",
     "  buffer, so a hit means 'on or near', never 'inside'. Word it that way.",
     "- A count marked truncated is a floor, not a total.",
+    "- sharedOpportunities are proposals and observations that partner organisations",
+    "  typed into the map, not funded projects, commitments or county policy. Attribute",
+    "  each one to the organisation that contributed it and say how far away it is. Never",
+    "  merge two contributions into one claim.",
+    "- If sharedOpportunities is null or its items list is empty, say in one sentence that",
+    "  no partner has recorded an opportunity here yet, and do not speculate about why.",
     "- Round figures for readability but never change them.",
     "- No preamble, no sign-off, no offer to help further.",
     "",
-    "Write in Markdown, under 350 words, in exactly these sections:",
+    "Write in Markdown, under 420 words, in exactly these sections:",
     "",
     "## Summary",
     "Two or three sentences: what this parcel is and whether it looks worth pursuing.",
@@ -405,10 +769,62 @@
     "## Setting",
     "The natural-resource and ownership context nearby, and what it implies.",
     "",
+    "## Shared opportunities",
+    "What partner organisations have already flagged here — who contributed it, what they",
+    "described, how far from the parcel, and whether it suggests someone to call. One",
+    "sentence saying there are none if the list is empty.",
+    "",
     "## What to check next",
     "Two to four concrete next steps for a planner, each tied to something specific in",
     "the data — including anything the data could not answer.",
   ].join("\n");
+
+  // The panel and the printed page can afford every field of every
+  // contribution. The prompt cannot, and does not need to: what the model has
+  // to write a paragraph is who, what, how far, and whether it is live.
+  const OPP_PROMPT_LIMIT = 12;
+  const OPP_DESCRIPTION_CHARS = 400;
+
+  function compactOpportunities(opps) {
+    if (!opps) return null;
+    const items = opps.items.slice(0, OPP_PROMPT_LIMIT).map(r => {
+      const out = {
+        type: r.type,
+        organization: r.organization,
+        description:
+          r.description && r.description.length > OPP_DESCRIPTION_CHARS
+            ? r.description.slice(0, OPP_DESCRIPTION_CHARS) + "…"
+            : r.description,
+        relation: r.relation,
+        distanceMetres: r.distanceMetres,
+        contributedOn: r.contributedOn,
+        feasibleInThreeYears: r.feasibleInThreeYears,
+        easeOfStart: r.easeOfStart,
+        priorityRating: r.priorityRating,
+        feasibilityRating: r.feasibilityRating,
+        connectionNeeds: r.connectionNeeds,
+        potentialFunder: r.potentialFunder,
+      };
+      // Drop the empty keys rather than send a wall of nulls the model then
+      // has to reason about.
+      Object.keys(out).forEach(k => {
+        if (out[k] === null || out[k] === undefined || out[k] === "") delete out[k];
+      });
+      return out;
+    });
+    return {
+      bufferMetres: opps.bufferMetres,
+      note: opps.note,
+      onParcelCount: opps.onParcelCount,
+      nearbyCount: opps.nearbyCount,
+      organizations: opps.organizations,
+      itemsShown: items.length,
+      itemsTotal: opps.items.length,
+      truncated: opps.items.length > items.length,
+      unavailableLayers: opps.unavailable,
+      items,
+    };
+  }
 
   function buildUserMessage(facts, includeOwner) {
     const payload = JSON.parse(JSON.stringify(facts));
@@ -417,6 +833,9 @@
       payload.ownerWithheld =
         "Owner and taxpayer names were deliberately withheld from this request.";
     }
+    payload.sharedOpportunities = stripOpportunityContributors(
+      compactOpportunities(facts.sharedOpportunities)
+    );
     return (
       "Parcel data:\n\n```json\n" +
       JSON.stringify(payload, null, 2) +
@@ -573,7 +992,154 @@
       `Within ${f.contextBufferMetres} m`,
       hits.length ? hits.map(c => `${c.layer} (${c.count}${c.truncated ? "+" : ""})`).join("; ") : "nothing from the context layers",
     ]);
+    rows.push(["Shared opportunities", opportunitySummary(f.sharedOpportunities, f.contextBufferMetres)]);
     return rows.filter(([, v]) => v !== null && v !== undefined && v !== "");
+  }
+
+  // ── Shared opportunities, rendered ───────────────────────────────────────
+
+  // The one-line version, used in the panel's fact table and again as the
+  // print section's opening line.
+  function opportunitySummary(opps, bufferM) {
+    if (!opps) return "could not be checked";
+    const dead = opps.unavailable.length;
+    if (!opps.items.length) {
+      if (dead === opps.layerStatus.length) {
+        return `could not be checked — all ${dead} contribution layers unreachable`;
+      }
+      return (
+        `none recorded within ${opps.bufferMetres || bufferM} m` +
+        (dead ? ` (${dead} of ${opps.layerStatus.length} layers unreachable)` : "")
+      );
+    }
+    const bits = [];
+    if (opps.onParcelCount) bits.push(`${opps.onParcelCount} on the parcel`);
+    if (opps.nearbyCount) bits.push(`${opps.nearbyCount} within ${opps.bufferMetres} m`);
+    return bits.join(", ");
+  }
+
+  // Nothing found is not the same fact as nothing could be checked, and every
+  // layer failing is not the same as one failing. All three read differently.
+  function opportunityEmptyText(opps) {
+    const dead = opps.unavailable.length;
+    if (dead && dead === opps.layerStatus.length) {
+      return (
+        "None of the NRPC contribution layers could be reached, so this is unknown " +
+        "rather than empty. Everything else in this report is unaffected."
+      );
+    }
+    return (
+      `No shared opportunities recorded within ${opps.bufferMetres} m.` +
+      (dead
+        ? ` ${dead} of ${opps.layerStatus.length} contribution layers could not be reached, so treat that as a floor.`
+        : "")
+    );
+  }
+
+  // "on the parcel" or "nearby · 84 m".
+  function opportunityWhere(r) {
+    if (r.relation === "on the parcel") return "on the parcel";
+    if (r.distanceMetres === null || r.distanceMetres === undefined) return "nearby";
+    return `nearby · ${r.distanceMetres.toLocaleString("en-US")} m`;
+  }
+
+  // The detail lines under a contribution's description — only the fields
+  // that layer's schema actually filled in.
+  function opportunityDetails(r) {
+    return OPP_DETAIL_LABELS.map(([key, label]) => [label, r[key]]).filter(
+      ([, v]) => v !== null && v !== undefined && v !== ""
+    );
+  }
+
+  // The panel's own block: a card per contribution, on-parcel ones first.
+  // The panel is 400 px wide, so it shows the first PANEL_OPP_LIMIT and points
+  // at the PDF for the rest rather than becoming a scroll of its own.
+  const PANEL_OPP_LIMIT = 10;
+
+  function opportunityPanelBlock(opps, bufferM) {
+    const box = el("div", { className: "pr-opps" });
+    box.append(
+      el("div", { className: "pr-opps-head" },
+        el("span", { className: "pr-opps-title", textContent: "Shared opportunities" }),
+        el("span", {
+          className: "pr-opps-sub",
+          textContent: `NRPC coalition contributions within ${bufferM} m`,
+        })
+      )
+    );
+
+    if (!opps) {
+      box.append(
+        el("div", {
+          className: "pr-opps-empty",
+          textContent:
+            "The NRPC contribution layers could not be checked for this parcel. Everything else above is unaffected.",
+        })
+      );
+      return box;
+    }
+
+    if (!opps.items.length) {
+      box.append(el("div", { className: "pr-opps-empty", textContent: opportunityEmptyText(opps) }));
+    } else {
+      const list = el("ul", { className: "pr-opp-list" });
+      opps.items.slice(0, PANEL_OPP_LIMIT).forEach(r => {
+        const li = el("li", { className: "pr-opp" });
+        li.append(
+          el("div", { className: "pr-opp-top" },
+            el("span", {
+              className: "pr-opp-org",
+              textContent: r.organization || "Organization not given",
+            }),
+            el("span", {
+              className:
+                "pr-opp-where" + (r.relation === "on the parcel" ? " pr-opp-on" : ""),
+              textContent: opportunityWhere(r),
+            })
+          ),
+          el("div", { className: "pr-opp-type", textContent: r.type })
+        );
+        if (r.description) {
+          li.append(el("div", { className: "pr-opp-desc", textContent: r.description }));
+        }
+        const details = opportunityDetails(r);
+        if (details.length) {
+          li.append(
+            el("div", {
+              className: "pr-opp-meta",
+              textContent: details.map(([k, v]) => `${k}: ${v}`).join(" · "),
+            })
+          );
+        }
+        const by = [r.contributor, r.contributedOn].filter(Boolean).join(" · ");
+        if (by) li.append(el("div", { className: "pr-opp-by", textContent: by }));
+        list.append(li);
+      });
+      box.append(list);
+      if (opps.items.length > PANEL_OPP_LIMIT) {
+        box.append(
+          el("div", {
+            className: "pr-opps-empty",
+            textContent: `+ ${opps.items.length - PANEL_OPP_LIMIT} more — all of them are on the PDF.`,
+          })
+        );
+      }
+    }
+
+    // Which layers failed, once — the empty text above already carries the
+    // headline when there is nothing to list.
+    if (opps.unavailable.length && opps.items.length) {
+      box.append(
+        el("div", {
+          className: "pr-warn",
+          textContent:
+            "Contribution layers unreachable: " +
+            opps.unavailable.join(", ") +
+            ". The list above is a floor.",
+        })
+      );
+    }
+    return box;
   }
 
   // ── Print view — the "Export as PDF" path ────────────────────────────────
@@ -598,7 +1164,9 @@
     "context layers — county parks, DNR public water basins, regional trails, Met " +
     "Council ecologically significant and sensitive areas, Met Council protection and " +
     "improvement opportunities, publicly owned and tax-exempt parcels, and BWSR " +
-    "watershed districts.";
+    "watershed districts. Shared opportunities come from the five contribution layers " +
+    "in the map's NRPC Data group: the two NRPC Opportunity Layers the Contribute panel " +
+    "writes to, and the three Winter Workshop 2025 layers.";
 
   function fmtDateTime(d) {
     try {
@@ -769,6 +1337,92 @@
       })
     );
 
+    // -- shared opportunities --
+    // Unlike the context table this one is not label/value: each contribution
+    // is a small block, because the description is the point of it.
+    const opps = f.sharedOpportunities;
+    const oppSection = el("section", { className: "pr-print-section" });
+    oppSection.append(el("h2", { textContent: "Shared opportunities" }));
+
+    if (!opps) {
+      oppSection.append(
+        el("p", {
+          className: "pr-print-note",
+          textContent:
+            "The NRPC contribution layers could not be reached at export time, so this " +
+            "section is unknown rather than empty.",
+        })
+      );
+    } else if (!opps.items.length) {
+      oppSection.append(
+        el("p", { className: "pr-print-lead", textContent: opportunityEmptyText(opps) })
+      );
+    } else {
+      oppSection.append(
+        el("p", {
+          className: "pr-print-lead",
+          textContent:
+            opportunitySummary(opps, f.contextBufferMetres) +
+            ", contributed by " +
+            (opps.organizations.length
+              ? opps.organizations.join(", ")
+              : "organisations not named on the record") +
+            ".",
+        })
+      );
+      opps.items.forEach(r => {
+        const item = el("div", { className: "pr-opp-print" });
+        item.append(
+          el("div", { className: "pr-opp-print-head" },
+            el("span", {
+              className: "pr-opp-print-org",
+              textContent: r.organization || "Organization not given",
+            }),
+            el("span", { className: "pr-opp-print-where", textContent: opportunityWhere(r) })
+          ),
+          el("div", { className: "pr-opp-print-type", textContent: r.type + " · " + r.source })
+        );
+        if (r.description) {
+          item.append(el("div", { className: "pr-opp-print-desc", textContent: r.description }));
+        }
+        const details = opportunityDetails(r);
+        if (details.length) {
+          item.append(
+            el("div", {
+              className: "pr-opp-print-meta",
+              textContent: details.map(([k, v]) => `${k}: ${v}`).join(" · "),
+            })
+          );
+        }
+        const by = [r.contributor, r.contributedOn ? "contributed " + r.contributedOn : null]
+          .filter(Boolean)
+          .join(" · ");
+        if (by) item.append(el("div", { className: "pr-opp-print-by", textContent: by }));
+        oppSection.append(item);
+      });
+      if (opps.unavailable.length) {
+        oppSection.append(
+          el("p", {
+            className: "pr-print-note",
+            textContent:
+              "Unreachable at export time: " + opps.unavailable.join(", ") + ". The list above is a floor.",
+          })
+        );
+      }
+    }
+    // Skip the boilerplate when the section has nothing to qualify.
+    if (opps && (opps.items.length || !opps.unavailable.length)) {
+      oppSection.append(
+        el("p", {
+          className: "pr-print-note",
+          textContent:
+            opps.note +
+            " Distances are straight-line from the parcel boundary; they are not travel distances.",
+        })
+      );
+    }
+    root.append(oppSection);
+
     // -- the brief --
     if (reportHTML) {
       section(
@@ -784,7 +1438,9 @@
       el("p", {
         textContent:
           "Owner and taxpayer names are on the county record but are deliberately left " +
-          "out of this export, as they are left out of the request sent to the model.",
+          "out of this export, as they are left out of the request sent to the model. " +
+          "The names of the people who contributed each shared opportunity are printed " +
+          "here, because they are who to call — but they too are withheld from the model.",
       }),
       el("p", {
         textContent:
@@ -958,6 +1614,7 @@
         table.append(tr);
       });
       factsBox.append(table);
+      factsBox.append(opportunityPanelBlock(f.sharedOpportunities, f.contextBufferMetres));
       const errs = f.context.filter(c => c.error);
       if (errs.length) {
         factsBox.append(

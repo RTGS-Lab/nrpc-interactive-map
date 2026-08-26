@@ -109,6 +109,7 @@ file and one script tag.
 | Hennepin **Parcel Base** | `Maps/NATURALRESOURCES/MapServer/2` | PID, address, acreage, property type, assessed values, sale history |
 | **Parcel Prioritization Model (Parcel View)** | `Hennepin_Suitability_Model_Results_parcel_detail/FeatureServer/97` | seven component scores, Overall Value, county Rank |
 | Nine context layers | parks, DNR public waters, regional trails, Met Council eco-significant / eco-sensitive / protection / improvement, public parcels, watershed districts | what falls on or near the parcel |
+| Five **NRPC contribution layers** | the two NRPC Opportunity Layers plus the three Winter Workshop 2025 layers | what coalition members themselves put on the map — see "Shared opportunities" below |
 
 The click is a point-in-polygon query against Parcel Base. The model layer joins
 on `PID`. Context layers are matched against the parcel's **bounding box padded
@@ -149,7 +150,86 @@ Request shape: `POST /v1/messages`, `anthropic-version: 2023-06-01`,
 parsed by hand — the deltas we care about are `content_block_delta` /
 `text_delta`.
 
+### Shared opportunities
+
+The report's fourth section is what NRPC coalition members have themselves put
+on the map on or near the parcel — as distinct from every other layer above,
+which is a dataset somebody else publishes.
+
+**Where it comes from.** Five feature layers, all under the webmap's `NRPC Data`
+group, all on `services.arcgis.com/8df8p0NlLFEShl0r`:
+
+| Layer in the map | Service | Geometry | Features on 2026-08-26 |
+|---|---|---|---|
+| Opportunity Area (Polygon) | `NRPC_Opportunity_Layer/FeatureServer/1` | polygon | **0** |
+| Opportunity Area (Point) | `NRPC_Opportunity_Layer/FeatureServer/0` | point | **0** |
+| Winter Workshop 2025 — Activity 1 | `Winter_Workshop_Activity_1/FeatureServer/0` | point | 162 |
+| Activity 2: Physical Connection | `Winter_Workshop_Activity_2/FeatureServer/1` | polygon | 21 |
+| Activity 2: Thematic Connection | `Winter_Workshop_Activity_2/FeatureServer/0` | polyline | 49 |
+
+The first two are the layers the Contribute panel's Editor widget writes to.
+**Both are empty**, so a report built on those alone would print "none recorded"
+on every parcel in the county. The three Winter Workshop layers carry the
+identical contribution schema — the Contribute form was clearly built from the
+workshop form — and hold every opportunity anyone has recorded so far, so all
+five are queried and each contribution is labelled with the layer it came from.
+When contributions start arriving through Contribute they appear with no code
+change.
+
+**There is no "opportunity type" field.** The schema is: `name` (Your Name),
+`organization`, `describe_opportunity`, `potential_funder`, `CreationDate`, plus
+either `three_years` / `easy_start` / `what_smooth` / `what_challenging` (the
+opportunity schema) or `connection_needs` / `rate_priority` /
+`rate_feasibility` (the connection schema). The layer a contribution sits in is
+the only type distinction the data carries, and that is what the report prints
+as the type. Do not invent one.
+
+Two gotchas in that schema, both verified against the live services:
+
+- `rate_feasibility` is an **integer** on the polyline layer and a **string** on
+  the polygon layer. Same survey question, two published types.
+- `CreationDate` comes back as an **ISO string** from these hosted layers, not
+  the epoch-milliseconds Hennepin's services use. `contributedOn()` takes
+  either.
+
+**The join is two queries per layer**, not the padded bounding box the nine
+context layers use:
+
+1. `spatialRel=esriSpatialRelIntersects` against the **parcel polygon itself**
+   → "on the parcel";
+2. the same query plus `distance=250&units=esriSRUnit_Meter` → everything
+   within 250 m.
+
+(2) minus (1), by `OBJECTID`, is "nearby". The server does the topology; the
+distance in metres is computed in `minDistanceM()` because ArcGIS will not
+report it. That function projects both geometries with the same
+111 320 m/degree local equirectangular approximation `padBBox()` uses — accurate
+to well under a metre over a parcel and its 250 m neighbourhood — and takes the
+minimum vertex-to-segment distance in both directions. It is only ever called on
+features the server has already said do **not** intersect the parcel, so
+boundary-to-boundary is the true distance and there is no containment case.
+Deliberately **not** `geometryEngine`: the whole feature still drops out by
+deleting one file and one script tag.
+
+**Degrading.** Every contribution query carries a 12 s `AbortController`
+deadline (`OPP_TIMEOUT_MS`) and its own try/catch, and `fetchOpportunities()`
+cannot reject. Three outcomes read differently on purpose: nothing found, some
+layers unreachable (the list is a floor), and every layer unreachable (unknown,
+not empty). The nine older context layers still have **no** timeout — a wedged
+one of those will hang the panel indefinitely. Worth fixing; not fixed here.
+
+**In the prompt.** `compactOpportunities()` trims to the first 12 items,
+truncates each description at 400 characters and drops null keys, then the
+system prompt gains a `## Shared opportunities` section and a rule that these
+are proposals typed into the map, not funded projects or county policy.
+
 ### Privacy
+
+Contributor names (`name`) are real people who filled in a workshop form. They
+are printed in the panel and on the PDF — for outreach, who to call is the
+actionable field — but `stripOpportunityContributors()` removes them from the
+API payload always. `Creator` / `Editor` are not fetched at all; on the workshop
+layers they are the facilitator's account (`runcklab_UMN`), not the contributor.
 
 `OWNER_NM` and the `TAXPAYER_NM*` fields carry a private individual's name and
 mailing address. They are public record, but a conservation-priority summary
@@ -191,9 +271,10 @@ are table rows and headings.
 The printed document is built from the same `facts` object the panel and the
 API payload come from, so it carries more than the panel's summary table: full
 assessment fields, all seven model scores with the rank and percentile, every
-context layer including the ones that matched nothing, the brief, the
-generation timestamp, and a sources footer. **Owner and taxpayer names are left
-out**, exactly as they are left out of the API request.
+context layer including the ones that matched nothing, every shared opportunity
+in full (the panel shows the first ten), the brief, the generation timestamp,
+and a sources footer. **Owner and taxpayer names are left out**, exactly as they
+are left out of the API request; opportunity contributors are not.
 
 Two printing-only data fixes live in `buildPrintDoc()`: an all-zero `ZIP_CD` is
 dropped rather than printed as "00000", and the last-sale row is suppressed

@@ -597,6 +597,116 @@ body,
   line-height: 1.4;
 }
 
+/* ── Shared opportunities, in the panel ─────────────────────────────────────
+ * What NRPC coalition members contributed to the map on or near this parcel.
+ * A card per contribution rather than a table row, because the description a
+ * partner typed is the substance and it does not fit in a cell.
+ */
+
+.pr-opps {
+  margin-top: 12px;
+  padding-top: 9px;
+  border-top: 1px solid #e0e0e0;
+}
+
+.pr-opps-head {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  margin-bottom: 7px;
+}
+
+.pr-opps-title {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #0079c1;
+}
+
+.pr-opps-sub {
+  font-size: 10px;
+  color: #999;
+}
+
+.pr-opps-empty {
+  font-size: 11px;
+  color: #888;
+  line-height: 1.45;
+  padding: 2px 0;
+}
+
+.pr-opp-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.pr-opp {
+  border-left: 2px solid #cfe4f2;
+  padding: 0 0 0 8px;
+  margin-bottom: 9px;
+}
+
+/* On-parcel contributions carry the accent; nearby ones stay quiet. */
+.pr-opp:has(.pr-opp-on) {
+  border-left-color: #0079c1;
+}
+
+.pr-opp-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.pr-opp-org {
+  font-size: 12px;
+  font-weight: 600;
+  color: #222;
+  word-break: break-word;
+}
+
+.pr-opp-where {
+  font-size: 10px;
+  color: #777;
+  white-space: nowrap;
+  flex: none;
+}
+
+.pr-opp-where.pr-opp-on {
+  color: #0079c1;
+  font-weight: 600;
+}
+
+.pr-opp-type {
+  font-size: 10px;
+  color: #999;
+  margin-top: 1px;
+}
+
+.pr-opp-desc {
+  font-size: 12px;
+  color: #333;
+  line-height: 1.45;
+  margin-top: 3px;
+  word-break: break-word;
+}
+
+.pr-opp-meta {
+  font-size: 10px;
+  color: #777;
+  line-height: 1.4;
+  margin-top: 3px;
+  word-break: break-word;
+}
+
+.pr-opp-by {
+  font-size: 10px;
+  color: #aaa;
+  margin-top: 2px;
+}
+
 #pr-actions {
   display: flex;
   align-items: center;
@@ -963,6 +1073,64 @@ body,
     color: #666;
     line-height: 1.4;
     margin: 5pt 0 0;
+  }
+
+  /* ── Shared opportunities, printed ──────────────────────────────────────
+     Each contribution is one block that must not break across a page: an
+     organisation split from its description reads as two separate items. */
+
+  #pr-print .pr-print-lead {
+    font-size: 9.5pt;
+    margin: 0 0 7pt;
+  }
+
+  #pr-print .pr-opp-print {
+    border-left: 1pt solid #bbb;
+    padding-left: 7pt;
+    margin-bottom: 8pt;
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
+  #pr-print .pr-opp-print-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 8pt;
+  }
+
+  #pr-print .pr-opp-print-org {
+    font-size: 9.5pt;
+    font-weight: 600;
+  }
+
+  #pr-print .pr-opp-print-where {
+    font-size: 8pt;
+    color: #444;
+    white-space: nowrap;
+  }
+
+  #pr-print .pr-opp-print-type {
+    font-size: 8pt;
+    color: #666;
+  }
+
+  #pr-print .pr-opp-print-desc {
+    font-size: 9.5pt;
+    margin-top: 2pt;
+  }
+
+  #pr-print .pr-opp-print-meta {
+    font-size: 8pt;
+    color: #444;
+    margin-top: 2pt;
+    line-height: 1.35;
+  }
+
+  #pr-print .pr-opp-print-by {
+    font-size: 7.5pt;
+    color: #777;
+    margin-top: 1.5pt;
   }
 
   #pr-print .pr-print-brief h3,
