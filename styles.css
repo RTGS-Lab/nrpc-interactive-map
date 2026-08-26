@@ -648,9 +648,26 @@ body,
   margin-bottom: 9px;
 }
 
-/* On-parcel contributions carry the accent; nearby ones stay quiet. */
+/* Three tiers, three weights: on-parcel carries the accent, on-an-adjacent-
+   parcel is clearly marked but subordinate, nearby stays quiet. The middle
+   tier has to be visible — it is the whole point of the adjacency search —
+   without competing with "this one is on your parcel". */
 .pr-opp:has(.pr-opp-on) {
   border-left-color: #0079c1;
+}
+
+.pr-opp:has(.pr-opp-adj) {
+  border-left-color: #4f9b3f;
+}
+
+/* How wide the search went, and what it deliberately left out. */
+.pr-opps-note {
+  font-size: 10px;
+  color: #8a8a8a;
+  line-height: 1.45;
+  margin-top: 8px;
+  padding-top: 6px;
+  border-top: 1px dotted #e2e2e2;
 }
 
 .pr-opp-top {
@@ -677,6 +694,14 @@ body,
 .pr-opp-where.pr-opp-on {
   color: #0079c1;
   font-weight: 600;
+}
+
+/* The PID makes this one long — let it wrap rather than squeeze the org. */
+.pr-opp-where.pr-opp-adj {
+  color: #3d7a31;
+  font-weight: 600;
+  white-space: normal;
+  text-align: right;
 }
 
 .pr-opp-type {

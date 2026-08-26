@@ -513,13 +513,45 @@
   }
 
   // esri REST JSON → an esri Geometry instance the engine will accept.
-  function toGeometry(engine, json, kind) {
+  function toGeometry(engine, json) {
     if (!json) return null;
     try {
       return engine.jsonUtils.fromJSON({ ...json, spatialReference: { wkid: 4326 } });
     } catch (_) {
       return null;
     }
+  }
+
+  // ── Stage timing ─────────────────────────────────────────────────────────
+  //
+  // Adjacency added a network round trip to the click path, and the budget it
+  // was built to — about a second at p50 — is only meaningful if it can be
+  // re-checked after a service gets slower or a layer gets added. So each
+  // stage records its own wall-clock into `NRPCParcelReport.dev.timings`.
+  // Nothing in the UI reads it; it costs two Date.now() calls per stage.
+
+  let stageTimings = { _t0: 0 };
+
+  function resetTimings(t0) {
+    stageTimings = { _t0: t0 };
+  }
+
+  function timed(name, fn) {
+    const t0 = Date.now();
+    stageTimings[name] = { startedAt: t0 - stageTimings._t0, ms: null };
+    return Promise.resolve()
+      .then(fn)
+      .then(
+        v => {
+          stageTimings[name].ms = Date.now() - t0;
+          return v;
+        },
+        e => {
+          stageTimings[name].ms = Date.now() - t0;
+          stageTimings[name].failed = true;
+          throw e;
+        }
+      );
   }
 
   // ── Data assembly ────────────────────────────────────────────────────────
@@ -718,30 +750,70 @@
       contributedOn: contributedOn(a.CreationDate),
       relation,
       distanceMetres,
+      // Set only on the middle tier: which neighbouring parcel it sits on.
+      adjacentParcelPid: null,
+      adjacentParcelCity: null,
     };
   }
 
+  // The three tiers, in the order they read. Anything that is none of them is
+  // dropped — that is the whole point of tiering rather than widening.
+  const ON_PARCEL = "on the parcel";
+  const ON_ADJACENT = "on an adjacent parcel";
+  const NEARBY = "nearby";
+  const TIER_RANK = { [ON_PARCEL]: 0, [ON_ADJACENT]: 1, [NEARBY]: 2 };
+
   /**
-   * What coalition members have put on the map on or near this parcel.
+   * What coalition members have put on the map on, beside, or near this parcel.
    *
-   * Two queries per layer, because the two questions are different ones:
+   * Two queries per layer — the same two the fixed-radius version issued, and
+   * the same count. What changed is the radius of the second one and what
+   * happens to its results afterwards:
    *
-   *   1. intersects the parcel polygon exactly  → "on the parcel"
-   *   2. within `bufferM` of the parcel polygon → everything in range
+   *   1. intersects the parcel polygon exactly → the FIRST tier, "on the
+   *      parcel". Server-side topology, unchanged.
+   *   2. within D of the parcel polygon, where D comes from `adjacency` rather
+   *      than a constant: far enough to cover the whole extent of every
+   *      adjacent parcel, and no further.
    *
-   * (2) minus (1) is "nearby", and its distance is measured here in JS from
-   * the returned geometry. The server does the topology, which is the part
-   * worth trusting it with; we do the arithmetic, which it will not report.
+   * Everything from (2) that is not already in (1) is then sorted into two
+   * tiers or thrown away:
+   *
+   *   ON_ADJACENT  it intersects one of the adjacent parcels → keep, and name
+   *                the PID, because "the parcel next door" is the fact a land
+   *                manager acts on
+   *   NEARBY       it is within NEARBY_M of the clicked boundary → keep, as
+   *                before
+   *   dropped      neither → discarded, and counted
+   *
+   * That last line is what stops a bigger search radius from becoming a bigger
+   * report. D can be 1,500 m, but nothing between 250 m and 1,500 m survives
+   * unless it is standing on a parcel that touches this one.
    *
    * A layer that errors, times out or is empty produces an entry in
-   * `status` and nothing else. Nothing here can reject: the report is more
-   * important than this section.
+   * `layerStatus` and nothing else. Nothing here can reject: the report is
+   * more important than this section.
    */
-  async function fetchOpportunities(parcelGeometry, bufferM, lat0) {
+  async function fetchOpportunities(parcelGeometry, adjacency, lat0) {
     const geometry = JSON.stringify({
       rings: parcelGeometry.rings,
       spatialReference: { wkid: 4326 },
     });
+
+    const adj = adjacency || {
+      parcels: [],
+      searched: 0,
+      notSearched: 0,
+      more: false,
+      searchDistanceM: NEARBY_M,
+      clipped: false,
+      toleranceM: ADJ_TOLERANCE_M,
+      error: "adjacency not available",
+    };
+    const D = adj.searchDistanceM || NEARBY_M;
+
+    // The engine and the queries start together; neither waits for the other.
+    const enginePromise = adj.parcels.length ? geometryEngine() : Promise.resolve(null);
 
     const jobs = OPPORTUNITY_LAYERS.map(async layer => {
       const outFields = OPP_COMMON_FIELDS.concat(OPP_SCHEMA_FIELDS[layer.schema]).join(",");
@@ -760,7 +832,7 @@
             layer.url,
             {
               ...base,
-              distance: String(bufferM),
+              distance: String(D),
               units: "esriSRUnit_Meter",
               returnGeometry: "true",
               outSR: "4326",
@@ -771,46 +843,117 @@
 
         const onFeatures = onJson.features || [];
         const onIds = new Set(onFeatures.map(f => f.attributes.OBJECTID));
-        const rows = onFeatures.map(f => opportunityRow(layer, f.attributes, "on the parcel", 0));
+        const rows = onFeatures.map(f => opportunityRow(layer, f.attributes, ON_PARCEL, 0));
+        const candidates = (nearJson.features || []).filter(
+          f => !onIds.has(f.attributes.OBJECTID)
+        );
 
-        (nearJson.features || []).forEach(f => {
-          if (onIds.has(f.attributes.OBJECTID)) return;
-          const d = minDistanceM(f.geometry, parcelGeometry, lat0);
-          rows.push(
-            opportunityRow(layer, f.attributes, "nearby", d === null ? null : Math.round(d))
-          );
-        });
-
-        return { layer, rows, error: null, truncated: onFeatures.length >= 25 };
+        return { layer, rows, candidates, error: null, truncated: onFeatures.length >= 25 };
       } catch (e) {
-        return { layer, rows: [], error: e.message, truncated: false };
+        return { layer, rows: [], candidates: [], error: e.message, truncated: false };
       }
     });
 
-    const results = await Promise.all(jobs);
-    const all = [];
-    results.forEach(r => all.push(...r.rows));
+    const [results, engine] = await Promise.all([Promise.all(jobs), enginePromise]);
 
-    // On the parcel first, then by how far away, then by organization so the
-    // order is stable between two loads of the same parcel.
-    const rank = r => (r.relation === "on the parcel" ? 0 : 1);
+    // The adjacent parcels, converted once, not once per contribution.
+    const adjacentGeoms = engine
+      ? adj.parcels
+          .map(p => ({ pid: p.pid, city: p.city, g: toGeometry(engine, p.geometry) }))
+          .filter(p => p.g)
+      : [];
+
+    // Why the engine and not "distance ≈ 0": see the comment on
+    // geometryEngine(). Two polygons whose boundaries cross between vertices
+    // genuinely intersect while minDistanceM() reports 0.64 m.
+    const onAdjacent = geom => {
+      if (!engine || !adjacentGeoms.length) return null;
+      const g = toGeometry(engine, geom);
+      if (!g) return null;
+      for (const p of adjacentGeoms) {
+        try {
+          if (engine.ge.intersects(g, p.g)) return p;
+        } catch (_) {
+          /* one bad ring must not lose the rest */
+        }
+      }
+      return null;
+    };
+
+    const all = [];
+    let dropped = 0;
+    const tierStart = Date.now();
+    results.forEach(r => {
+      all.push(...r.rows);
+      r.candidates.forEach(f => {
+        const raw = minDistanceM(f.geometry, parcelGeometry, lat0);
+        const d = raw === null ? null : Math.round(raw);
+        const neighbour = onAdjacent(f.geometry);
+        if (neighbour) {
+          const row = opportunityRow(r.layer, f.attributes, ON_ADJACENT, d);
+          row.adjacentParcelPid = neighbour.pid;
+          row.adjacentParcelCity = neighbour.city;
+          all.push(row);
+        } else if (d !== null && d <= NEARBY_M) {
+          all.push(opportunityRow(r.layer, f.attributes, NEARBY, d));
+        } else {
+          // Beyond 250 m and not standing on a neighbour: not this parcel's
+          // business. Counted so the report can say how much it left out.
+          dropped++;
+        }
+      });
+    });
+
+    // The client-side half of the feature, measured on its own: this is the
+    // part that scales with adjacent parcels × contributions.
+    stageTimings.tiering = { startedAt: tierStart - stageTimings._t0, ms: Date.now() - tierStart };
+
+    // Tier first, then distance, then organization so two loads of the same
+    // parcel produce the same order.
     all.sort(
       (a, b) =>
-        rank(a) - rank(b) ||
+        (TIER_RANK[a.relation] ?? 9) - (TIER_RANK[b.relation] ?? 9) ||
         (a.distanceMetres ?? 1e9) - (b.distanceMetres ?? 1e9) ||
         String(a.organization || "").localeCompare(String(b.organization || ""))
     );
 
+    const count = tier => all.filter(r => r.relation === tier).length;
+
     return {
-      bufferMetres: bufferM,
+      // Kept under the old name: it is what "nearby" still means, and the
+      // panel, the print view and the prompt all read it.
+      bufferMetres: NEARBY_M,
+      searchDistanceM: D,
+      adjacency: {
+        toleranceMetres: adj.toleranceM,
+        parcelsSearched: adj.searched,
+        parcelsNotSearched: adj.notSearched,
+        moreThanFetched: adj.more,
+        farthestParcelMetres: adj.farthestM ?? null,
+        clippedAtMetres: adj.clipped ? ADJ_MAX_D_M : null,
+        pids: [...new Set(all.map(r => r.adjacentParcelPid).filter(Boolean))],
+        // Null when it worked. A string when the tier could not be computed,
+        // in which case the section is exactly the old 250 m one.
+        unavailable: adj.error
+          ? "the adjacent-parcel lookup failed"
+          : !engine && adj.parcels.length
+          ? "the map's geometry engine did not load"
+          : null,
+      },
+      droppedBeyondTiers: dropped,
       note:
         "Opportunities are what NRPC coalition members contributed to the map themselves. " +
         "'On the parcel' means the contributed geometry intersects the parcel boundary; " +
-        "'nearby' is the straight-line distance from the parcel boundary to the nearest " +
-        "point of the contribution. These are proposals and observations, not commitments.",
+        "'on an adjacent parcel' means it intersects a parcel that touches this one, and " +
+        "can be much further away than 250 m; 'nearby' is within " +
+        NEARBY_M +
+        " m of the parcel boundary. Distances are straight-line from the parcel boundary " +
+        "to the nearest point of the contribution. These are proposals and observations, " +
+        "not commitments.",
       items: all,
-      onParcelCount: all.filter(r => r.relation === "on the parcel").length,
-      nearbyCount: all.filter(r => r.relation === "nearby").length,
+      onParcelCount: count(ON_PARCEL),
+      onAdjacentCount: count(ON_ADJACENT),
+      nearbyCount: count(NEARBY),
       organizations: [...new Set(all.map(r => r.organization).filter(Boolean))],
       layerStatus: results.map(r => ({
         layer: r.layer.label,
@@ -850,16 +993,34 @@
 
     const midLat = bbox ? (bbox.ymin + bbox.ymax) / 2 : lat;
 
+    const hasRings = !!(feature.geometry && feature.geometry.rings);
+
+    // The adjacency query starts NOW, in the same tick as the nine context
+    // fetches and the model join — not after them. It is the only new network
+    // round trip in the click path, and overlapping it with the nine that were
+    // already there is what keeps the added wall-clock down; the opportunity
+    // queries then chain off it, because they cannot know how far to look
+    // until they know what touches this parcel.
+    const adjacencyPromise = hasRings
+      ? timed("adjacency", () => fetchAdjacentParcels(feature.geometry, clean(a.PID), midLat))
+      : Promise.resolve(null);
+
     const [scores, context, total, opportunities] = await Promise.all([
       fetchModelScores(a.PID),
-      bbox ? fetchContext(padBBox(bbox, CONTEXT_BUFFER_M)) : Promise.resolve([]),
+      timed("context", () =>
+        bbox ? fetchContext(padBBox(bbox, CONTEXT_BUFFER_M)) : Promise.resolve([])
+      ),
       modelTotal(),
-      // Same 250 m as the context layers, but measured from the parcel
-      // boundary itself rather than from a padded bounding box — these are
-      // few enough to buffer properly, and a distance in metres is the whole
-      // point of the section.
-      feature.geometry && feature.geometry.rings
-        ? fetchOpportunities(feature.geometry, CONTEXT_BUFFER_M, midLat).catch(() => null)
+      // Three tiers now, not one radius: on the parcel, on a parcel touching
+      // it, or within 250 m of it. Distances are measured from the parcel
+      // boundary itself rather than from a padded bounding box — a distance in
+      // metres is the whole point of the section.
+      hasRings
+        ? adjacencyPromise
+            .then(adj => timed("opportunities", () =>
+              fetchOpportunities(feature.geometry, adj, midLat)
+            ))
+            .catch(() => null)
         : Promise.resolve(null),
     ]);
 
@@ -966,6 +1127,16 @@
     "  typed into the map, not funded projects, commitments or county policy. Attribute",
     "  each one to the organisation that contributed it and say how far away it is. Never",
     "  merge two contributions into one claim.",
+    "- Each shared opportunity carries a `relation`, and the three values mean different",
+    "  things. 'on the parcel' is on this parcel. 'on an adjacent parcel' is on a parcel",
+    "  that physically touches this one — say so, name the adjacentParcelPid, and give the",
+    "  distance, which can be far more than the nearby radius because a neighbouring",
+    "  parcel can be large. 'nearby' is within bufferMetres of the boundary and is not",
+    "  known to be on any particular parcel. Do not describe an adjacent-parcel",
+    "  contribution as being on this parcel, or as merely nearby.",
+    "- droppedBeyondTiers, if greater than zero, is how many further contributions were",
+    "  found and deliberately excluded for being neither on this parcel, nor on one",
+    "  touching it, nor within bufferMetres. Mention the number only if it is non-zero.",
     "- If sharedOpportunities is null or its items list is empty, say in one sentence that",
     "  no partner has recorded an opportunity here yet, and do not speculate about why.",
     "- Round figures for readability but never change them.",
@@ -985,8 +1156,9 @@
     "",
     "## Shared opportunities",
     "What partner organisations have already flagged here — who contributed it, what they",
-    "described, how far from the parcel, and whether it suggests someone to call. One",
-    "sentence saying there are none if the list is empty.",
+    "described, whether it is on this parcel, on a parcel touching it, or merely nearby,",
+    "how far from the parcel, and whether it suggests someone to call. One sentence saying",
+    "there are none if the list is empty.",
     "",
     "## What to check next",
     "Two to four concrete next steps for a planner, each tied to something specific in",
@@ -1010,6 +1182,7 @@
             ? r.description.slice(0, OPP_DESCRIPTION_CHARS) + "…"
             : r.description,
         relation: r.relation,
+        adjacentParcelPid: r.adjacentParcelPid,
         distanceMetres: r.distanceMetres,
         contributedOn: r.contributedOn,
         feasibleInThreeYears: r.feasibleInThreeYears,
@@ -1028,9 +1201,13 @@
     });
     return {
       bufferMetres: opps.bufferMetres,
+      searchDistanceMetres: opps.searchDistanceM,
+      adjacency: opps.adjacency,
       note: opps.note,
       onParcelCount: opps.onParcelCount,
+      onAdjacentCount: opps.onAdjacentCount,
       nearbyCount: opps.nearbyCount,
+      droppedBeyondTiers: opps.droppedBeyondTiers,
       organizations: opps.organizations,
       itemsShown: items.length,
       itemsTotal: opps.items.length,
@@ -1214,6 +1391,22 @@
 
   // The one-line version, used in the panel's fact table and again as the
   // print section's opening line.
+  // True only when the middle tier was actually computed. When it was not, the
+  // section IS the old 250 m one and every line of prose has to say so rather
+  // than claim neighbours were checked.
+  function adjacencyWorked(opps) {
+    return !!(opps && opps.adjacency && !opps.adjacency.unavailable && opps.adjacency.parcelsSearched);
+  }
+
+  // "…on this parcel, on the parcels touching it, or within 250 m" — or just
+  // "…within 250 m" when the adjacency tier is not in play.
+  function scopeWords(opps, bufferM) {
+    const m = (opps && opps.bufferMetres) || bufferM;
+    return adjacencyWorked(opps)
+      ? `on this parcel, on the parcels touching it, or within ${m} m`
+      : `within ${m} m`;
+  }
+
   function opportunitySummary(opps, bufferM) {
     if (!opps) return "could not be checked";
     const dead = opps.unavailable.length;
@@ -1222,14 +1415,64 @@
         return `could not be checked — all ${dead} contribution layers unreachable`;
       }
       return (
-        `none recorded within ${opps.bufferMetres || bufferM} m` +
+        `none ${scopeWords(opps, bufferM)}` +
         (dead ? ` (${dead} of ${opps.layerStatus.length} layers unreachable)` : "")
       );
     }
     const bits = [];
     if (opps.onParcelCount) bits.push(`${opps.onParcelCount} on the parcel`);
+    if (opps.onAdjacentCount) {
+      bits.push(
+        `${opps.onAdjacentCount} on ${
+          opps.onAdjacentCount === 1 ? "an adjacent parcel" : "adjacent parcels"
+        }`
+      );
+    }
     if (opps.nearbyCount) bits.push(`${opps.nearbyCount} within ${opps.bufferMetres} m`);
     return bits.join(", ");
+  }
+
+  // One line of arithmetic the reader would otherwise have to do: how wide the
+  // search actually went, how many neighbours it covered, and what it threw
+  // away. Only rendered when there is something non-obvious to say.
+  function adjacencyNote(opps) {
+    if (!opps || !opps.adjacency) return null;
+    const a = opps.adjacency;
+    if (a.unavailable) {
+      return (
+        `Adjacent parcels could not be checked — ${a.unavailable}. This section is the ` +
+        `plain ${opps.bufferMetres} m search, as it was before.`
+      );
+    }
+    const bits = [
+      `Searched ${a.parcelsSearched} parcel${a.parcelsSearched === 1 ? "" : "s"} touching this ` +
+        `one (within ${a.toleranceMetres} m, so across a road counts), out to ` +
+        `${opps.searchDistanceM.toLocaleString("en-US")} m.`,
+    ];
+    if (a.parcelsNotSearched) {
+      bits.push(
+        `${a.parcelsNotSearched} more adjacent parcel${
+          a.parcelsNotSearched === 1 ? "" : "s"
+        } not searched.`
+      );
+    }
+    if (a.moreThanFetched) bits.push("The parcel layer had more neighbours than it returned.");
+    if (a.clippedAtMetres) {
+      bits.push(
+        `One adjacent parcel reaches ${a.farthestParcelMetres.toLocaleString("en-US")} m — ` +
+          `past the ${a.clippedAtMetres.toLocaleString("en-US")} m search limit — so its far ` +
+          `end was not searched.`
+      );
+    }
+    if (opps.droppedBeyondTiers) {
+      bits.push(
+        `${opps.droppedBeyondTiers} contribution${
+          opps.droppedBeyondTiers === 1 ? " was" : "s were"
+        } found further out and left out, being neither on this parcel, on one touching it, nor ` +
+          `within ${opps.bufferMetres} m.`
+      );
+    }
+    return bits.join(" ");
   }
 
   // Nothing found is not the same fact as nothing could be checked, and every
@@ -1243,18 +1486,27 @@
       );
     }
     return (
-      `No shared opportunities recorded within ${opps.bufferMetres} m.` +
+      `No shared opportunities ${scopeWords(opps, opps.bufferMetres)}.` +
       (dead
         ? ` ${dead} of ${opps.layerStatus.length} contribution layers could not be reached, so treat that as a floor.`
         : "")
     );
   }
 
-  // "on the parcel" or "nearby · 84 m".
+  // "on the parcel", "on adjacent parcel 2002924230002 · 1,140 m", "nearby · 84 m".
   function opportunityWhere(r) {
-    if (r.relation === "on the parcel") return "on the parcel";
-    if (r.distanceMetres === null || r.distanceMetres === undefined) return "nearby";
-    return `nearby · ${r.distanceMetres.toLocaleString("en-US")} m`;
+    const d =
+      r.distanceMetres === null || r.distanceMetres === undefined
+        ? null
+        : `${r.distanceMetres.toLocaleString("en-US")} m`;
+    if (r.relation === ON_PARCEL) return ON_PARCEL;
+    if (r.relation === ON_ADJACENT) {
+      // The PID is the point. "On an adjacent parcel" without it leaves the
+      // reader with a fact they cannot act on.
+      const who = r.adjacentParcelPid ? `on adjacent parcel ${r.adjacentParcelPid}` : ON_ADJACENT;
+      return d ? `${who} · ${d}` : who;
+    }
+    return d ? `nearby · ${d}` : "nearby";
   }
 
   // The detail lines under a contribution's description — only the fields
@@ -1268,16 +1520,26 @@
   // The panel's own block: a card per contribution, on-parcel ones first.
   // The panel is 400 px wide, so it shows the first PANEL_OPP_LIMIT and points
   // at the PDF for the rest rather than becoming a scroll of its own.
-  const PANEL_OPP_LIMIT = 10;
+  //
+  // These three numbers are the answer to "make sure it doesn't include too
+  // much". Widening the search to whole adjacent parcels could have made this
+  // section grow without limit; instead the tiers throw away everything that
+  // is neither on a touching parcel nor within 250 m, and these cap what
+  // survives that.
+  const PANEL_OPP_LIMIT = 12;
+  const PRINT_OPP_LIMIT = 50;
 
   function opportunityPanelBlock(opps, bufferM) {
     const box = el("div", { className: "pr-opps" });
+    const searched = adjacencyWorked(opps) ? opps.adjacency.parcelsSearched : 0;
     box.append(
       el("div", { className: "pr-opps-head" },
         el("span", { className: "pr-opps-title", textContent: "Shared opportunities" }),
         el("span", {
           className: "pr-opps-sub",
-          textContent: `NRPC coalition contributions within ${bufferM} m`,
+          textContent: searched
+            ? `NRPC coalition contributions on this parcel, on the ${searched} touching it, or within ${bufferM} m`
+            : `NRPC coalition contributions within ${bufferM} m`,
         })
       )
     );
@@ -1307,7 +1569,9 @@
             }),
             el("span", {
               className:
-                "pr-opp-where" + (r.relation === "on the parcel" ? " pr-opp-on" : ""),
+                "pr-opp-where" +
+                (r.relation === ON_PARCEL ? " pr-opp-on" : "") +
+                (r.relation === ON_ADJACENT ? " pr-opp-adj" : ""),
               textContent: opportunityWhere(r),
             })
           ),
@@ -1338,6 +1602,19 @@
           })
         );
       }
+    }
+
+    // How wide the search went and what it discarded. Worth one line whether
+    // or not anything was found — "nothing here" means more when you can see
+    // that eleven neighbouring parcels were checked.
+    const adjLine = adjacencyNote(opps);
+    if (adjLine) {
+      box.append(
+        el("div", {
+          className: opps.adjacency.unavailable ? "pr-warn" : "pr-opps-note",
+          textContent: adjLine,
+        })
+      );
     }
 
     // Which layers failed, once — the empty text above already carries the
@@ -1584,7 +1861,9 @@
             ".",
         })
       );
-      opps.items.forEach(r => {
+      // The PDF carries all of them, up to a hard cap — a page of paper is
+      // cheap, but a hundred contributions is a different document.
+      opps.items.slice(0, PRINT_OPP_LIMIT).forEach(r => {
         const item = el("div", { className: "pr-opp-print" });
         item.append(
           el("div", { className: "pr-opp-print-head" },
@@ -1614,6 +1893,16 @@
         if (by) item.append(el("div", { className: "pr-opp-print-by", textContent: by }));
         oppSection.append(item);
       });
+      if (opps.items.length > PRINT_OPP_LIMIT) {
+        oppSection.append(
+          el("p", {
+            className: "pr-print-note",
+            textContent: `${opps.items.length - PRINT_OPP_LIMIT} further contribution${
+              opps.items.length - PRINT_OPP_LIMIT === 1 ? "" : "s"
+            } matched and are not printed; this export shows the closest ${PRINT_OPP_LIMIT}.`,
+          })
+        );
+      }
       if (opps.unavailable.length) {
         oppSection.append(
           el("p", {
@@ -1624,14 +1913,20 @@
         );
       }
     }
+    // How far the search went and what it discarded — on the page, because the
+    // printed report is the one that gets forwarded without the map beside it.
+    const printAdjLine = adjacencyNote(opps);
+    if (printAdjLine) {
+      oppSection.append(el("p", { className: "pr-print-note", textContent: printAdjLine }));
+    }
     // Skip the boilerplate when the section has nothing to qualify.
     if (opps && (opps.items.length || !opps.unavailable.length)) {
       oppSection.append(
         el("p", {
           className: "pr-print-note",
-          textContent:
-            opps.note +
-            " Distances are straight-line from the parcel boundary; they are not travel distances.",
+          // opps.note already explains what the distances are measured from;
+          // the only thing left to say on paper is what they are not.
+          textContent: opps.note + " They are not travel distances.",
         })
       );
     }
@@ -1882,8 +2177,11 @@
       openPanel();
       highlightLayer.removeAll();
 
+      const loadStart = Date.now();
+      resetTimings(loadStart);
+
       try {
-        const feature = await fetchParcelAt(lon, lat);
+        const feature = await timed("parcel", () => fetchParcelAt(lon, lat));
         if (!feature) {
           hint.textContent = "No Hennepin County parcel at that point.";
           return;
@@ -1897,6 +2195,8 @@
           );
         }
         facts = await assembleFacts(feature, lon, lat);
+        stageTimings.total = { startedAt: 0, ms: Date.now() - loadStart };
+        stageTimings.pid = facts && facts.identity ? facts.identity.pid : null;
         showFacts(facts);
         setStatus("");
       } catch (e) {
@@ -2012,6 +2312,16 @@
     //   NRPCParcelReport.dev.buildPrintDoc()   // fills #pr-print, no dialog
     window.NRPCParcelReport.dev = {
       loadParcel,
+      // Wall-clock per stage for the last parcel loaded, in ms, with the
+      // offset from the click at which each stage started — that is what
+      // shows adjacency running alongside the context fetches rather than
+      // after them. Read by outputs/make-timings.py; nothing in the UI uses it.
+      get timings() {
+        return JSON.parse(JSON.stringify(stageTimings));
+      },
+      get facts() {
+        return facts;
+      },
       showReport: md => showReport(md, modelSelect.value),
       buildPrintDoc: () => {
         if (!facts || !lastReport) return false;

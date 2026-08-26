@@ -197,19 +197,105 @@ context layers use:
 
 1. `spatialRel=esriSpatialRelIntersects` against the **parcel polygon itself**
    → "on the parcel";
-2. the same query plus `distance=250&units=esriSRUnit_Meter` → everything
-   within 250 m.
+2. the same query plus `distance=<D>&units=esriSRUnit_Meter` → everything
+   within D, where D is computed from the adjacent parcels — see "Parcel
+   adjacency" below. It was a fixed 250 m until that section landed.
 
-(2) minus (1), by `OBJECTID`, is "nearby". The server does the topology; the
-distance in metres is computed in `minDistanceM()` because ArcGIS will not
-report it. That function projects both geometries with the same
-111 320 m/degree local equirectangular approximation `padBBox()` uses — accurate
-to well under a metre over a parcel and its 250 m neighbourhood — and takes the
-minimum vertex-to-segment distance in both directions. It is only ever called on
-features the server has already said do **not** intersect the parcel, so
-boundary-to-boundary is the true distance and there is no containment case.
-Deliberately **not** `geometryEngine`: the whole feature still drops out by
-deleting one file and one script tag.
+(2) minus (1), by `OBJECTID`, is sorted into the other two tiers. The server
+does the topology for tier 1; the distance in metres is computed in
+`minDistanceM()` because ArcGIS will not report it. That function projects both
+geometries with the same 111 320 m/degree local equirectangular approximation
+`padBBox()` uses — accurate to well under a metre over a parcel and its
+neighbourhood — and takes the minimum vertex-to-segment distance in both
+directions. It is only ever called on features the server has already said do
+**not** intersect the parcel, so boundary-to-boundary is the true distance and
+there is no containment case.
+
+---
+
+## Parcel adjacency (branch `parcel-report`)
+
+"Within 250 m" and "next door" are different questions, and the second is the
+one a land manager asks. A neighbouring 213-acre park **touches** the clicked
+parcel, but something drawn at its far end sits a kilometre away — and a radius
+wide enough to catch it catches everything else at that radius too.
+
+So the search is topological, and the results are tiered:
+
+| Tier | Test | Kept |
+|---|---|---|
+| `on the parcel` | server: intersects the parcel polygon | always |
+| `on an adjacent parcel` | client: intersects a parcel within 30 m of it | always, with the PID |
+| `nearby` | within 250 m of the parcel boundary | always |
+| — | none of the above | **dropped, and counted** |
+
+That last row is the whole reason the section does not balloon: D can be
+1,500 m, but nothing between 250 m and 1,500 m survives unless it is standing
+on a parcel that touches this one.
+
+**One extra query, run concurrently.** `fetchAdjacentParcels()` asks Parcel Base
+for everything within `ADJ_TOLERANCE_M` (30 m) of the clicked polygon — the same
+layer and the same spatial index the click itself used. It is fired in the same
+tick as the nine context fetches, not after them; the opportunity queries then
+chain off it, because they cannot know how far to look until they know what
+touches the parcel. Measured: the adjacency query is 0.4–1.0 s and the nine
+context layers are slower than that, so on most parcels it costs nothing at all.
+
+**The constants and what they are for.** `ADJ_TOLERANCE_M` 30 (a road
+right-of-way — on PID 2411921110001, 15 m finds 9 neighbours and 30 m finds 13;
+the four extra are across 83rd Ave N). `ADJ_MAX` 40 parcels searched, nearest
+first by envelope distance, the rest counted and named in one line.
+`ADJ_MAX_D_M` 1,500 m ceiling on D. `PANEL_OPP_LIMIT` 12, `PRINT_OPP_LIMIT` 50,
+`OPP_PROMPT_LIMIT` 12.
+
+D itself is `min(1500, max(250, farthest envelope corner of any kept adjacent
+parcel))`.
+
+### Three gotchas, all verified against the live services on 2026-08-26
+
+- **Hennepin's Parcel Base returns twelve fewer features than
+  `resultRecordCount` asks for.** Ask 30 → 19, ask 41 → 29, ask 50 → 38, ask
+  60 → 48, ask 80 → 68, ask 100 → 88, ask 150 → all 121. `exceededTransferLimit`
+  is the only trustworthy "there are more" signal. `ADJ_FETCH` is therefore
+  `ADJ_MAX + 20`.
+
+- **`minDistanceM()` cannot stand in for `intersects()`.** On PID
+  `2411921110001` against Winter Workshop Activity 2 polygon `OBJECTID` 5 the
+  server says they intersect, and they do — but `minDistanceM()` returns
+  **0.64 m**, because the two boundaries cross *between* vertices and a
+  vertex-to-segment minimum never reaches zero there. Any "distance ≈ 0 means
+  on it" rule silently mis-tiers that contribution. Hence the geometry engine.
+
+- **The geometry engine is loaded by this file, for itself.** `index.html`
+  provides the ArcGIS AMD loader, so `parcel-report.js` calls
+  `require(["esri/geometry/geometryEngine", "esri/geometry/support/jsonUtils"])`
+  on its own. `init()`'s signature and `main.js` are untouched, so the feature
+  still drops out by deleting one file and one script tag — the property the
+  previous commit protected. If the require fails or takes longer than 12 s,
+  `geometryEngine()` resolves `null`, the middle tier is skipped, and the
+  section says so in one line and behaves exactly as the old 250 m one did.
+
+### Deliberately not done
+
+- **No `maxAllowableOffset` on the adjacent-parcel geometry.** Generalizing it
+  to the current scale would halve the payload (46 kB → 27 kB on the densest
+  parcel in the county), but the tiering is a *topological* test against those
+  rings, so a scale-dependent generalization would make the same parcel report
+  different tiers at different zoom levels. A reproducible report is worth
+  20 kB.
+
+### Known limits
+
+- The nearest-40 cap and D are computed from what one query returned. On a
+  parcel with more than ~48 neighbours *and* a far-reaching one among the ones
+  the server did not send, D can be short. The densest parcel found in the
+  county (PID `3602924210376`, 121 neighbours) is not such a case — all 121 are
+  small and close — but the shape is possible.
+- Tiers are computed against parcel boundaries, so a contribution drawn in the
+  road between two parcels lands in `nearby`, not on either.
+- `NRPCParcelReport.dev.timings` carries wall-clock per stage for the last
+  parcel loaded. Nothing in the UI reads it; it is how the ~1 s budget gets
+  re-checked when a service gets slower.
 
 **Degrading.** Every contribution query carries a 12 s `AbortController`
 deadline (`OPP_TIMEOUT_MS`) and its own try/catch, and `fetchOpportunities()`
