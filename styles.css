@@ -656,7 +656,8 @@ body,
 #sv-timeline-row {
   display: none;
   align-items: center;
-  gap: 8px;
+  flex-wrap: wrap;
+  gap: 4px 8px;
   padding: 6px 10px;
   border-top: 1px solid #e0e0e0;
   flex-shrink: 0;
@@ -676,7 +677,10 @@ body,
   display: flex;
   gap: 6px;
   overflow-x: auto;
-  flex: 1;
+  /* Take the room that is going, but never squash below a readable chip. */
+  flex: 1 1 140px;
+  min-width: 0;
+  padding-bottom: 2px;
 }
 
 #sv-timeline-note {

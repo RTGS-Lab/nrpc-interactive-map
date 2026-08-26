@@ -9,7 +9,8 @@ require([
   "esri/Graphic",
   "esri/Basemap",
   "esri/geometry/geometryEngine",
-], (WebMap, MapView, Home, LayerList, Legend, Editor, GraphicsLayer, Graphic, Basemap, geometryEngine) => {
+  "esri/geometry/Point",
+], (WebMap, MapView, Home, LayerList, Legend, Editor, GraphicsLayer, Graphic, Basemap, geometryEngine, Point) => {
 
   const webmap = new WebMap({
     portalItem: {
@@ -1525,39 +1526,87 @@ require([
     // panorama moves the dot but leaves the map where they put it.
     let svUserInteracting = false;
     let svInteractionTimer = null;
+    // The panel takes 0.3s to slide. Measuring how much map it covers while it
+    // is still moving gives the wrong answer, and a recentre fired on that
+    // measurement then races the corrected one — the dot ends up somewhere
+    // between the two. Only recentre once the panel has settled.
+    let svPanelSliding = false;
+    let svPanelSlideTimer = null;
+    // One recentre animation at a time, for the same reason: a second goTo
+    // launched mid-flight measures a position that is still moving.
+    let svRecenterInFlight = false;
+    let svRecenterWanted = false;
+
+    function svPanelSlideDone() {
+      if (svPanelSlideTimer) clearTimeout(svPanelSlideTimer);
+      svPanelSlideTimer = null;
+      svPanelSliding = false;
+    }
+
+    function svPanelSlideStart() {
+      svPanelSliding = true;
+      if (svPanelSlideTimer) clearTimeout(svPanelSlideTimer);
+      // transitionend does not fire if the transition is disabled (reduced
+      // motion, or a browser that skips it), so never wait on it forever.
+      svPanelSlideTimer = setTimeout(() => {
+        svPanelSlideDone();
+        svPositionPulse();
+        svRecenter();
+      }, 500);
+    }
 
     function svMarkInteraction(active) {
-      if (active) {
-        svUserInteracting = true;
-        if (svInteractionTimer) clearTimeout(svInteractionTimer);
-        svInteractionTimer = null;
-        return;
-      }
       if (svInteractionTimer) clearTimeout(svInteractionTimer);
-      // A short grace period so the inertia of a flick does not get yanked.
+      svUserInteracting = active;
+      // The timer runs in both directions on purpose. Coming out of a drag it
+      // is a grace period, so the inertia of a flick does not get yanked back.
+      // Going in, it is a watchdog: a "drag" that starts and never ends would
+      // otherwise leave the flag stuck and kill recentring for the session.
       svInteractionTimer = setTimeout(() => {
         svUserInteracting = false;
         svInteractionTimer = null;
-      }, 600);
+      }, active ? 4000 : 600);
     }
 
-    view.on("drag", e => svMarkInteraction(e.action !== "end"));
+    // Only a drag that actually moves counts. A plain map click still emits
+    // "start" and "end", and treating "start" as interaction made every first
+    // click skip its own recentre — the dot landed under the panel edge.
+    view.on("drag", e => {
+      if (e.action === "end") svMarkInteraction(false);
+      else if (e.action === "update") svMarkInteraction(true);
+    });
     view.on("mouse-wheel", () => {
       svMarkInteraction(true);
       svMarkInteraction(false);
     });
 
     // Keep the dot glued to its map point through pan, zoom and animation.
+    // view.toScreen() declines to project while the view is still settling —
+    // right after the panel opens, which is exactly when the dot is first
+    // placed — so a refusal is retried on the next frame instead of leaving
+    // the dot hidden until something else happens to move the map.
+    let svPulseRetries = 0;
     function svPositionPulse() {
       if (!svPinPoint || !svPanel.classList.contains("open")) {
         svPulse.style.display = "none";
+        svPulseRetries = 0;
         return;
       }
-      const sp = view.toScreen(svPinPoint);
-      if (!sp) {
+      let sp = null;
+      try {
+        sp = view.toScreen(svPinPoint);
+      } catch (_) {
+        sp = null;
+      }
+      if (!sp || typeof sp.x !== "number" || !isFinite(sp.x)) {
         svPulse.style.display = "none";
+        if (svPulseRetries < 60) {
+          svPulseRetries++;
+          requestAnimationFrame(svPositionPulse);
+        }
         return;
       }
+      svPulseRetries = 0;
       svPulse.style.left = `${sp.x}px`;
       svPulse.style.top = `${sp.y}px`;
       svPulse.style.display = "block";
@@ -1571,6 +1620,12 @@ require([
     // the dot underneath it.
     function svRecenter() {
       if (!svPinPoint || svUserInteracting || !svPanel.classList.contains("open")) return;
+      if (svPanelSliding) return;
+      if (svRecenterInFlight) {
+        // Let the one in flight land, then correct from where it actually got.
+        svRecenterWanted = true;
+        return;
+      }
       const rect = view.container.getBoundingClientRect();
       if (!rect.width || !rect.height) return;
       const panelRect = svPanel.getBoundingClientRect();
@@ -1586,12 +1641,24 @@ require([
       const dy = rect.height / 2 - desiredY;
       const newCenter = view.toMap({ x: sp.x + dx, y: sp.y + dy });
       if (!newCenter) return;
-      view
-        .goTo({ center: newCenter }, { duration: 350, easing: "ease-out" })
-        .catch(() => {
+      svRecenterInFlight = true;
+      view.goTo({ center: newCenter }, { duration: 350, easing: "ease-out" }).then(
+        () => {
+          svRecenterInFlight = false;
+          svPositionPulse();
+          if (svRecenterWanted) {
+            svRecenterWanted = false;
+            svRecenter();
+          }
+        },
+        () => {
           // goTo rejects when the user interrupts the animation. That is the
-          // user winning, which is the intended outcome.
-        });
+          // user winning, so drop the follow-up rather than yanking the map
+          // back out from under them.
+          svRecenterInFlight = false;
+          svRecenterWanted = false;
+        }
+      );
     }
 
     // A wedge of `halfAngle` either side of `heading`, `radiusM` long, built
@@ -1623,12 +1690,14 @@ require([
     // `recenter` is true only when the panorama moved to a new place —
     // turning the camera should not drag the map around under it.
     function svDrawMapLink(lat, lng, heading, recenter) {
-      svPinPoint = {
-        type: "point",
+      // A real Point, not an autocast literal: Graphic will autocast its
+      // geometry but view.toScreen() will not, and it fails the projection
+      // with "mapview:projection-not-possible" rather than telling you why.
+      svPinPoint = new Point({
         longitude: lng,
         latitude: lat,
         spatialReference: { wkid: 4326 }
-      };
+      });
       const cone = {
         type: "polygon",
         rings: [svConeRing(lat, lng, heading)],
@@ -1992,15 +2061,34 @@ require([
       return (brng + 360) % 360;
     }
 
+    // The panel slides in over 0.3s. Anything that measures it — the panorama
+    // sizing itself, and the recentre working out how much map the panel is
+    // covering — has to wait for the slide to finish or it measures a panel
+    // that is still off-screen and puts the dot underneath it.
+    svPanel.addEventListener("transitionend", e => {
+      if (e.propertyName !== "transform" || e.target !== svPanel) return;
+      svPanelSlideDone();
+      if (svPano && svPanel.classList.contains("open")) {
+        google.maps.event.trigger(svPano, "resize");
+      }
+      svPositionPulse();
+      svRecenter();
+    });
+
     function openPanel() {
+      const wasOpen = svPanel.classList.contains("open");
       svPanel.classList.add("open");
       svTab.textContent = "▶";
+      // Only a real state change slides; re-opening an open panel must not
+      // arm a transition that will never end.
+      if (!wasOpen) svPanelSlideStart();
       if (svPano) {
         requestAnimationFrame(() => google.maps.event.trigger(svPano, "resize"));
       }
     }
 
     function closePanel() {
+      if (svPanel.classList.contains("open")) svPanelSlideStart();
       svPanel.classList.remove("open");
       svTab.textContent = "◀";
       // The dot belongs to the open panel; it goes when the panel goes.
