@@ -48,6 +48,46 @@
   // How far past the parcel boundary we look for context features.
   const CONTEXT_BUFFER_M = 250;
 
+  // ── Parcel adjacency ─────────────────────────────────────────────────────
+  //
+  // "Adjacent" is topology, not radius. A neighbouring 200-acre park touches
+  // the clicked parcel, but something drawn at its far end can sit a kilometre
+  // away — and a radius big enough to catch it catches everything else at that
+  // radius too. So the parcels touching the clicked one are looked up once, by
+  // the same spatial index the click itself uses, and they become the second
+  // of three tiers.
+  //
+  // Measured against the live Hennepin Parcel Base and the 232 real
+  // contributions on 2026-08-26: 817 (parcel, contribution) pairs in the
+  // county have a contribution sitting on a directly adjacent parcel MORE than
+  // 250 m from the clicked boundary. Every one of them is invisible to the old
+  // fixed 250 m rule.
+
+  // Enough to reach across a road right-of-way, which is what "adjacent" means
+  // to a land manager. Measured on PID 2411921110001 (Brooklyn Park): 15 m
+  // finds 9 neighbours, 30 m finds 13 — the four extra are across 83rd Ave N.
+  const ADJ_TOLERANCE_M = 30;
+
+  // Adjacent parcels actually searched. Past this, the nearest ADJ_MAX by
+  // envelope distance are kept and the rest are reported rather than searched.
+  const ADJ_MAX = 40;
+
+  // What we ASK the server for. Hennepin's Parcel Base returns twelve fewer
+  // features than `resultRecordCount` requests — verified across seven values
+  // on 2026-08-26 (ask 30 → 19, ask 41 → 29, ask 60 → 48, ask 150 → all 121).
+  // `exceededTransferLimit` is the only trustworthy "there are more" signal.
+  // Asking for ADJ_MAX + 20 reliably yields at least ADJ_MAX.
+  const ADJ_FETCH = ADJ_MAX + 20;
+
+  // Ceiling on the computed opportunity search distance. An adjacent parcel
+  // reaching beyond this is named in one line rather than searched to its end.
+  const ADJ_MAX_D_M = 1500;
+
+  // The third tier: still the old 250 m, measured from the parcel boundary.
+  const NEARBY_M = CONTEXT_BUFFER_M;
+
+  const ADJ_TIMEOUT_MS = 12000;
+
   // Everything we intersect against the parcel's neighbourhood. `label` is what
   // the user and the model see; `nameField` is the field worth quoting.
   const CONTEXT_LAYERS = [
@@ -406,6 +446,82 @@
     return isFinite(d) ? d : null;
   }
 
+  // Farthest corner of `bbox` from the (already projected) clicked parcel.
+  // This is what sets the opportunity search distance: how far out we have to
+  // look to be sure we have covered an adjacent parcel's whole extent.
+  function farthestEnvelopeM(clickedParts, bbox, lat0) {
+    const corners = [
+      [
+        [bbox.xmin, bbox.ymin],
+        [bbox.xmax, bbox.ymin],
+        [bbox.xmax, bbox.ymax],
+        [bbox.xmin, bbox.ymax],
+      ],
+    ];
+    const C = projectParts(corners, lat0);
+    let best = 0;
+    C[0].forEach(([x, y]) => {
+      const d = vertsToSegs([[[x, y]]], clickedParts);
+      if (isFinite(d) && d > best) best = d;
+    });
+    return best;
+  }
+
+  // ── Topology: the ArcGIS geometry engine, loaded on our own ──────────────
+  //
+  // The three tiers below need a real intersects() test, and distance cannot
+  // stand in for one. Measured case, PID 2411921110001 against Winter Workshop
+  // Activity 2 polygon OBJECTID 5: the server says they intersect, and they do
+  // — but minDistanceM() returns 0.64 m, because the two boundaries cross
+  // BETWEEN vertices and a vertex-to-segment minimum never reaches zero there.
+  // Any "distance ≈ 0 means on it" rule silently mis-tiers that contribution.
+  //
+  // index.html loads the ArcGIS AMD loader, so this file can `require` the
+  // geometry engine for itself. It does NOT go through init()'s signature and
+  // main.js is not touched, so the feature still drops out by deleting one
+  // file and one script tag — the property the previous commit protected.
+  //
+  // If the require fails, geometryEngine() resolves null and the report falls
+  // back to the old fixed 250 m behaviour with a line saying so. It never
+  // throws and never blocks.
+  let geometryEnginePromise = null;
+  function geometryEngine() {
+    if (!geometryEnginePromise) {
+      geometryEnginePromise = new Promise(resolve => {
+        if (typeof require !== "function") return resolve(null);
+        let settled = false;
+        const done = v => {
+          if (!settled) {
+            settled = true;
+            resolve(v);
+          }
+        };
+        // A wedged CDN must not hold the panel open.
+        setTimeout(() => done(null), ADJ_TIMEOUT_MS);
+        try {
+          require(
+            ["esri/geometry/geometryEngine", "esri/geometry/support/jsonUtils"],
+            (ge, jsonUtils) => done(ge && jsonUtils ? { ge, jsonUtils } : null),
+            () => done(null)
+          );
+        } catch (_) {
+          done(null);
+        }
+      });
+    }
+    return geometryEnginePromise;
+  }
+
+  // esri REST JSON → an esri Geometry instance the engine will accept.
+  function toGeometry(engine, json, kind) {
+    if (!json) return null;
+    try {
+      return engine.jsonUtils.fromJSON({ ...json, spatialReference: { wkid: 4326 } });
+    } catch (_) {
+      return null;
+    }
+  }
+
   // ── Data assembly ────────────────────────────────────────────────────────
 
   // Total parcels in the model layer, for turning a rank into a percentile.
@@ -464,6 +580,104 @@
       }
     });
     return Promise.all(jobs);
+  }
+
+  // ── Parcel adjacency ─────────────────────────────────────────────────────
+
+  /**
+   * The parcels touching the clicked one, and the search distance they imply.
+   *
+   * ONE indexed query, against the same Parcel Base layer and the same spatial
+   * index the click itself used: everything within ADJ_TOLERANCE_M of the
+   * clicked polygon. That tolerance is what carries "adjacent" across a road
+   * right-of-way, which is what a land manager means by the word.
+   *
+   * Returns, never throws:
+   *   parcels          the kept neighbours, nearest first, with geometry
+   *   searched         how many were kept (≤ ADJ_MAX)
+   *   notSearched      how many were found and dropped by the cap
+   *   more             true if the server said there were more than it sent
+   *   searchDistanceM  D — how far the opportunity queries must now look
+   *   clipped          true if an adjacent parcel reaches past ADJ_MAX_D_M
+   */
+  async function fetchAdjacentParcels(parcelGeometry, ownPid, lat0) {
+    const empty = {
+      parcels: [],
+      searched: 0,
+      notSearched: 0,
+      more: false,
+      searchDistanceM: NEARBY_M,
+      farthestM: null,
+      clipped: false,
+      toleranceM: ADJ_TOLERANCE_M,
+      error: null,
+    };
+    if (!parcelGeometry || !parcelGeometry.rings) return empty;
+
+    let json;
+    try {
+      json = await esriQuery(
+        PARCEL_BASE,
+        {
+          geometry: JSON.stringify({
+            rings: parcelGeometry.rings,
+            spatialReference: { wkid: 4326 },
+          }),
+          geometryType: "esriGeometryPolygon",
+          inSR: "4326",
+          spatialRel: "esriSpatialRelIntersects",
+          distance: String(ADJ_TOLERANCE_M),
+          units: "esriSRUnit_Meter",
+          outFields: "PID,MUNIC_NM",
+          returnGeometry: "true",
+          outSR: "4326",
+          resultRecordCount: String(ADJ_FETCH),
+        },
+        ADJ_TIMEOUT_MS
+      );
+    } catch (e) {
+      return { ...empty, error: e.message };
+    }
+
+    // NOT generalized with maxAllowableOffset, deliberately. The tiering below
+    // is a topological test against these rings, and a scale-dependent
+    // generalization would make the same parcel report different tiers at
+    // different zoom levels. Measured cost of keeping full detail: ~7 kB on a
+    // typical parcel, 46 kB on the densest case in the county (121 neighbours
+    // around PID 3602924210376) — cheaper than a report that is not reproducible.
+    const clickedParts = projectParts(geometryParts(parcelGeometry), lat0);
+
+    const found = (json.features || [])
+      .filter(f => f.attributes && f.attributes.PID !== ownPid)
+      .filter(f => f.geometry && f.geometry.rings && f.geometry.rings.length)
+      .map(f => {
+        const bbox = ringsBBox(f.geometry);
+        return {
+          pid: clean(f.attributes.PID),
+          city: clean(f.attributes.MUNIC_NM),
+          geometry: f.geometry,
+          farM: bbox ? farthestEnvelopeM(clickedParts, bbox, lat0) : 0,
+        };
+      })
+      .sort((a, b) => a.farM - b.farM);
+
+    const parcels = found.slice(0, ADJ_MAX);
+    const farthestM = parcels.reduce((m, p) => Math.max(m, p.farM), 0);
+    const D = Math.min(ADJ_MAX_D_M, Math.max(NEARBY_M, farthestM));
+
+    return {
+      parcels,
+      searched: parcels.length,
+      notSearched: found.length - parcels.length,
+      // The count the server returns is not the count you asked for on this
+      // layer, so this flag — not arithmetic — is what "there are more" means.
+      more: json.exceededTransferLimit === true,
+      searchDistanceM: Math.round(D),
+      farthestM: farthestM ? Math.round(farthestM) : null,
+      clipped: farthestM > ADJ_MAX_D_M,
+      toleranceM: ADJ_TOLERANCE_M,
+      error: null,
+    };
   }
 
   // ── Shared opportunities ─────────────────────────────────────────────────
