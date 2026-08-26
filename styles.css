@@ -1313,6 +1313,36 @@ html.nrpc-mobile #pr-title {
   font-size: 15px;
 }
 
+/* Re-locate from inside the sheet. The bottom bar is hidden while the sheet
+   is up; this is the same action at 44px in the header. */
+#mb-sheet-locate {
+  display: none;
+}
+
+html.nrpc-mobile #mb-sheet-locate {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  margin: -10px 0 -10px auto;
+  border: none;
+  background: none;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+html.nrpc-mobile #mb-sheet-locate .mb-locate-icon {
+  width: 15px;
+  height: 15px;
+  border: 3px solid #0079c1;
+  box-shadow: 0 0 0 3px rgba(0, 121, 193, 0.22);
+}
+
+html.nrpc-mobile #mb-sheet-locate:active .mb-locate-icon {
+  border-color: #005e96;
+}
+
 html.nrpc-mobile #pr-close {
   font-size: 26px;
   width: 44px;
@@ -1322,15 +1352,88 @@ html.nrpc-mobile #pr-close {
 
 html.nrpc-mobile #pr-body {
   padding: 0 14px 14px;
+  /* pan-y, not none: the body must keep its own scrolling. Only the grip
+     opts out of the browser's touch scrolling, because only the grip drags. */
+  touch-action: pan-y;
   /* Momentum scroll inside the sheet, and the drag on the grip does not fight
      the scroll because the grip sets touch-action: none. */
   -webkit-overflow-scrolling: touch;
   overscroll-behavior: contain;
 }
 
-/* The side tab has no job once the sheet has a grip. */
+/* The side tab becomes the way back to a sheet you closed. It is the same
+   button doing the same job — reopen the report — in the shape a thumb can
+   find, and it is the reason closing the sheet is safe. */
 html.nrpc-mobile #pr-tab {
+  position: fixed;
+  top: auto;
+  right: 12px;
+  bottom: calc(92px + env(safe-area-inset-bottom, 0px));
+  left: auto;
+  transform: none;
+  width: auto;
+  height: 40px;
+  padding: 0 16px;
+  border-radius: 20px;
+  border: none;
+  background: #323232;
+  color: #fff;
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  box-shadow: 0 3px 14px rgba(0, 0, 0, 0.28);
+  z-index: 310;
+  writing-mode: horizontal-tb;
+}
+
+html.nrpc-mobile #pr-tab.mb-chip-hidden {
   display: none;
+}
+
+/* ── Tool panels, sized for a phone ───────────────────────────────────────
+   The class the surface manager puts on whichever tool is open. It overrides
+   the desktop's fixed 300px box and the inline top/left main.js computes from
+   the toolbar button's rect — a rect that was inside the drawer this panel
+   just replaced. `!important` is the point: those are inline styles.
+
+   Bottom-anchored above the locate bar, so the one control the mobile build
+   exists for is never buried under a tool panel. */
+
+html.nrpc-mobile .mb-surface {
+  position: fixed !important;
+  left: 8px !important;
+  right: 8px !important;
+  top: auto !important;
+  bottom: calc(92px + env(safe-area-inset-bottom, 0px)) !important;
+  width: auto !important;
+  max-width: none !important;
+  height: auto !important;
+  max-height: min(62vh, 520px) !important;
+  z-index: 460 !important;
+  border-radius: 12px !important;
+  box-shadow: 0 4px 22px rgba(0, 0, 0, 0.3) !important;
+  overflow: hidden !important;
+  display: flex !important;
+  flex-direction: column !important;
+}
+
+/* The dropdowns are plain divs, not .panel flex columns; they need their own
+   scroll or a long city list runs off the bottom. */
+html.nrpc-mobile #basemap-dropdown.mb-surface,
+html.nrpc-mobile #city-dropdown-list.mb-surface,
+html.nrpc-mobile #clip-zip-dropdown.mb-surface {
+  overflow-y: auto !important;
+}
+
+html.nrpc-mobile .mb-surface .panel-title {
+  font-size: 15px;
+  padding: 12px 12px 10px;
+}
+
+html.nrpc-mobile .mb-surface input[type="text"],
+html.nrpc-mobile .mb-surface input[type="search"] {
+  font-size: 16px; /* no iOS zoom-on-focus */
+  min-height: 40px;
 }
 
 /* Bigger type and looser rows: this is read at arm's length in daylight. */
@@ -1415,7 +1518,9 @@ html.nrpc-mobile #mb-bar {
   position: fixed;
   left: 12px;
   right: 12px;
-  bottom: calc(12px + env(safe-area-inset-bottom, 0px));
+  /* Clear of the Esri attribution strip, which is a licensing requirement and
+     therefore not something to cover up. */
+  bottom: calc(30px + env(safe-area-inset-bottom, 0px));
   z-index: 300;
   pointer-events: none;
 }
@@ -1501,7 +1606,7 @@ html.nrpc-mobile #mb-fix {
   position: fixed;
   left: 12px;
   right: 12px;
-  bottom: calc(74px + env(safe-area-inset-bottom, 0px));
+  bottom: calc(92px + env(safe-area-inset-bottom, 0px));
   z-index: 300;
   padding: 7px 12px;
   background: rgba(255, 255, 255, 0.95);

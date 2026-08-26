@@ -234,12 +234,194 @@
       return document.documentElement.classList.contains("mb-menu-open");
     }
     function setMenu(open) {
-      document.documentElement.classList.toggle("mb-menu-open", open);
-      scrim.classList.toggle("hidden", !open);
-      menuBtn.classList.toggle("open", open);
+      setClass(document.documentElement, "mb-menu-open", open);
+      setClass(scrim, "hidden", !open);
+      setClass(menuBtn, "open", open);
     }
-    menuBtn.addEventListener("click", () => setMenu(!menuOpen()));
-    scrim.addEventListener("click", () => setMenu(false));
+    // ── The surface manager ─────────────────────────────────────────────────
+    //
+    // On a 1440px desktop the toolbar's six tools are independent widgets and
+    // it does not matter that two can be open at once — there is room. On a
+    // 390px screen it matters a great deal: two open panels cover the map
+    // completely, including the position dot the whole feature exists to
+    // show. So on mobile the tools, the drawer and the report sheet are ONE
+    // stack with one rule: exactly one surface is open at a time.
+    //
+    // This does not reimplement any of main.js's open/close logic, which
+    // would guarantee the two drift apart. Every tool in the toolbar happens
+    // to represent "open" the same way — `hidden` off the panel, `active` on
+    // its button — so the manager watches that class and enforces exclusivity
+    // *around* the desktop handlers. They still own opening and closing; this
+    // owns what else must close, and how the result is sized for a phone.
+
+    const SURFACES = [
+      { name: "layers", wrap: "layer-list-wrapper", toggle: "layers-toggle" },
+      { name: "legend", wrap: "legend-wrapper", toggle: "legend-toggle" },
+      { name: "contribute", wrap: "contribute-wrapper", toggle: "contribute-toggle" },
+      { name: "basemap", wrap: "basemap-dropdown", toggle: "basemap-btn" },
+      { name: "zoomto", wrap: "city-dropdown-list", toggle: "city-dropdown-btn" },
+      { name: "clipzip", wrap: "clip-zip-dropdown", toggle: "clip-zip-btn" },
+    ];
+
+    /**
+     * Add or remove a class ONLY if that actually changes the element.
+     *
+     * This is not a micro-optimisation, it is the whole reason the manager
+     * works. `classList.add()` on a token that is already present still
+     * rewrites the class attribute, and a rewritten attribute still queues a
+     * MutationRecord — so an observer that "closes what is already closed"
+     * wakes itself, and six observers that close each other wake each other,
+     * forever, inside the microtask queue. That does not throw and it does not
+     * log: it silently freezes the renderer before the first paint. Measured
+     * here on 2026-08-26 — all six observers hit a 300-callback debug cap
+     * during page load, and the tab stopped responding to CDP entirely.
+     *
+     * Every class write in the manager goes through this.
+     */
+    function setClass(node, name, on) {
+      if (!node) return false;
+      if (node.classList.contains(name) === !!on) return false;
+      node.classList.toggle(name, !!on);
+      return true;
+    }
+
+    const wrapOf = s => document.getElementById(s.wrap);
+    const toggleOf = s => document.getElementById(s.toggle);
+
+    function surfaceIsOpen(s) {
+      const w = wrapOf(s);
+      return !!w && !w.classList.contains("hidden");
+    }
+
+    function openSurfaceName() {
+      const s = SURFACES.find(surfaceIsOpen);
+      return s ? s.name : null;
+    }
+
+    function closeSurface(s) {
+      let changed = setClass(wrapOf(s), "hidden", true);
+      changed = setClass(wrapOf(s), "mb-surface", false) || changed;
+      changed = setClass(toggleOf(s), "active", false) || changed;
+      return changed;
+    }
+
+    function closeSurfaces(except) {
+      let changed = false;
+      SURFACES.forEach(s => {
+        if (s !== except) changed = closeSurface(s) || changed;
+      });
+      return changed;
+    }
+
+    /**
+     * The topmost thing covering the map, or null. Order matters: it is what
+     * Escape and the back gesture dismiss, one layer at a time.
+     */
+    function topmost() {
+      if (api.isOpen()) return "sheet";
+      const n = openSurfaceName();
+      if (n) return n;
+      if (menuOpen()) return "drawer";
+      return null;
+    }
+
+    function closeTopmost() {
+      const t = topmost();
+      if (!t) return false;
+      if (t === "sheet") api.closePanel();
+      else if (t === "drawer") setMenu(false);
+      else closeSurfaces();
+      return true;
+    }
+
+    /** Everything closed — the landing state, and what tapping the map gives. */
+    function closeAll() {
+      closeSurfaces();
+      setMenu(false);
+    }
+
+    // A tool opening is the event everything else hangs off. Every branch is
+    // idempotent, so a callback that has nothing to do writes nothing and
+    // wakes nobody — including itself.
+    SURFACES.forEach(s => {
+      const w = wrapOf(s);
+      if (!w) return;
+      new MutationObserver(() => {
+        if (!surfaceIsOpen(s)) {
+          setClass(w, "mb-surface", false);
+          return;
+        }
+        closeSurfaces(s);
+        // mb-surface re-sizes it for the phone: full width, above the locate
+        // bar, capped in height. It overrides the inline top/left main.js
+        // computed from the toolbar button's rect — a rect that was inside
+        // the drawer this panel is replacing.
+        const justOpened = setClass(w, "mb-surface", true);
+        setMenu(false);
+        // The report sheet is a surface too, and it loses to a tool the user
+        // just asked for. It stays recoverable from the "Parcel report" chip.
+        if (api.isOpen()) api.closePanel();
+        // Only on the opening edge, or the back stack would gain an entry
+        // every time anything rewrote this element's class attribute.
+        if (justOpened) pushSurface(s.name);
+      }).observe(w, { attributes: true, attributeFilter: ["class"] });
+    });
+
+    // The hamburger is the way in AND the way out. If anything is covering
+    // the map it closes that first; only from a clear map does it open the
+    // drawer. Without this the one always-visible control appears dead
+    // whenever a tool is up.
+    menuBtn.addEventListener("click", () => {
+      if (menuOpen()) {
+        setMenu(false);
+        return;
+      }
+      if (openSurfaceName() || api.isOpen()) {
+        closeAll();
+        if (api.isOpen()) api.closePanel();
+        return;
+      }
+      setMenu(true);
+      pushSurface("drawer");
+    });
+
+    scrim.addEventListener("click", closeAll);
+
+    // Tapping the map dismisses whatever is over it. The map click that
+    // selects a parcel is a separate handler in parcel-report.js and still
+    // runs — which is right: picking a parcel should close the tool panel and
+    // open the sheet, in that order.
+    view.on("click", () => {
+      if (openSurfaceName()) closeSurfaces();
+      if (menuOpen()) setMenu(false);
+    });
+
+    // Escape, and the phone's back gesture. Each closes one layer.
+    document.addEventListener("keydown", e => {
+      if (e.key === "Escape" && closeTopmost()) e.preventDefault();
+    });
+
+    // Back gesture: every surface push adds one history entry, and popping it
+    // closes that surface instead of leaving the app. `popping` keeps the
+    // close from pushing a new entry and trapping the user in the page.
+    let depth = 0;
+    let popping = false;
+    function pushSurface(name) {
+      if (popping) return;
+      depth++;
+      try {
+        history.pushState({ mbSurface: name, mbDepth: depth }, "");
+      } catch (_) {
+        /* file:// or a sandbox without history — Escape still works */
+      }
+    }
+    window.addEventListener("popstate", () => {
+      if (depth <= 0) return;
+      depth--;
+      popping = true;
+      closeTopmost();
+      popping = false;
+    });
 
     // A place in the menu for the one map setting the mobile build changes.
     // Without it "where did the parcel lines go?" has no answer on the phone.
@@ -265,13 +447,15 @@
       else bar.appendChild(row);
     }
 
-    // Any tap on a toolbar control closes the drawer, so the map is visible
-    // for whatever the control just did.
-    const toggleBar = document.getElementById("toggle-bar");
-    if (toggleBar) {
-      toggleBar.addEventListener("click", e => {
+    // Picking a tool closes the drawer. The manager does this too when the
+    // tool actually opens; this covers the buttons that toggle something
+    // OTHER than a panel (Home), which would otherwise leave the drawer
+    // sitting over the result.
+    const toolbarEl = document.getElementById("toggle-bar");
+    if (toolbarEl) {
+      toolbarEl.addEventListener("click", e => {
         if (e.target.closest("#mb-parcel-layer-row")) return;
-        if (e.target.closest("button")) setTimeout(() => setMenu(false), 120);
+        if (e.target.closest("button, calcite-button")) setTimeout(() => setMenu(false), 60);
       });
     }
 
@@ -284,11 +468,24 @@
     grip.append(el("div", { className: "mb-grip-bar" }));
     panel.insertBefore(grip, panel.firstChild);
 
+    // Re-locate without closing the sheet. The big button at the bottom is
+    // hidden once the sheet is up (it would sit under it), and "walk to the
+    // next parcel, look again" is the actual field loop — so the affordance
+    // has to survive into the open sheet. Icon-only, but 44px.
+    const sheetLocate = el("button", {
+      id: "mb-sheet-locate",
+      type: "button",
+      title: "Use my location again",
+      innerHTML: '<span class="mb-locate-icon" aria-hidden="true"></span>',
+    });
+    sheetLocate.addEventListener("click", () => locateBtn.click());
+    api.header.insertBefore(sheetLocate, api.header.lastChild);
+
     const STOPS = ["peek", "half", "full"];
     let stop = "half";
     function setStop(name) {
       stop = name;
-      STOPS.forEach(s => panel.classList.toggle("mb-" + s, s === name));
+      STOPS.forEach(s => setClass(panel, "mb-" + s, s === name));
     }
     setStop("half");
 
@@ -296,6 +493,10 @@
     // device emulation. Vertical travel is converted to the nearest stop on
     // release rather than to a free position — a sheet that lands anywhere is
     // a sheet you have to fiddle with, and this one gets used one-handed.
+    // Only the grip is draggable, and pointer capture is taken on the grip
+    // alone — never on the panel — so #pr-body keeps every wheel, touch-move
+    // and scroll event it needs. A sheet you cannot scroll is worse than a
+    // sheet you cannot drag.
     let dragFrom = null;
     grip.addEventListener("pointerdown", e => {
       dragFrom = { y: e.clientY, stop };
@@ -322,6 +523,28 @@
     }
     grip.addEventListener("pointerup", endDrag);
     grip.addEventListener("pointercancel", endDrag);
+    // A wheel over the sheet is a desktop/emulator gesture, not a phone one,
+    // but it is how this gets reviewed — and at the peek stop there is often
+    // nothing to scroll, so the wheel would look broken. Scrolling past the
+    // top of an already-scrolled-to-top sheet raises it a stop instead.
+    api.body.addEventListener(
+      "wheel",
+      e => {
+        if (dragFrom) return;
+        const atTop = api.body.scrollTop <= 0;
+        const atBottom =
+          api.body.scrollTop + api.body.clientHeight >= api.body.scrollHeight - 1;
+        const i = STOPS.indexOf(stop);
+        if (e.deltaY < 0 && atTop && i > 0) {
+          // scrolled up past the top: nothing more to reveal, so shrink
+          setStop(STOPS[i - 1]);
+        } else if (e.deltaY > 0 && atBottom && i < STOPS.length - 1) {
+          setStop(STOPS[i + 1]);
+        }
+      },
+      { passive: true }
+    );
+
     grip.addEventListener("click", () => {
       // A tap on the grip cycles up, then wraps to peek. Cheaper than a drag
       // when the sheet is where you can reach it.
@@ -329,12 +552,32 @@
       setStop(STOPS[(i + 1) % STOPS.length]);
     });
 
-    // The sheet opening must not leave the drawer over it. Watched rather than
-    // wrapped: openPanel() is called from inside parcel-report.js and all this
-    // needs is to react to the result.
+    // The sheet is the sixth surface, and the one that wins: selecting a
+    // parcel closes whatever tool was open. Watched rather than wrapped —
+    // openPanel() is called from inside parcel-report.js and all this needs
+    // is to react to the result.
+    //
+    // A closed sheet must stay recoverable. On the desktop that is the side
+    // tab; here the same button becomes a pill above the locate bar, shown
+    // only once a parcel has been loaded. Without it, "open the menu" would
+    // silently throw away the parcel you just walked to.
+    let sheetWasOpen = false;
+    function syncSheetChip() {
+      const open = panel.classList.contains("open");
+      setClass(api.tab, "mb-chip-hidden", open || !api.hasFacts());
+    }
     new MutationObserver(() => {
-      if (panel.classList.contains("open")) setMenu(false);
+      const open = panel.classList.contains("open");
+      if (open && !sheetWasOpen) {
+        setMenu(false);
+        closeSurfaces();
+        pushSurface("sheet");
+      }
+      sheetWasOpen = open;
+      syncSheetChip();
     }).observe(panel, { attributes: true, attributeFilter: ["class"] });
+    api.tab.textContent = "Parcel report";
+    setClass(api.tab, "mb-chip-hidden", true);
 
     // ── the locate path ─────────────────────────────────────────────────────
 
@@ -407,6 +650,7 @@
           accuracyM: typeof accuracy === "number" ? Math.round(accuracy) : null,
           at: new Date().toISOString(),
         };
+        syncSheetChip();
         if (feature) {
           console.log(
             "[mobile] time to context: " + lastTiming.totalMs + " ms (tap to facts on screen)"
@@ -504,6 +748,13 @@
       }
     });
 
+    // Landing state: nothing covering the map. The desktop opens with the
+    // layer list showing, which is right at 1440px and wrong at 390 — a 300px
+    // panel over a 390px map hides the thing it is a legend for. The only
+    // controls on a fresh mobile screen are the hamburger, "Use my location"
+    // and "Follow me".
+    closeSurfaces();
+
     // ── tap-to-select still works ───────────────────────────────────────────
     // The desktop click handler in parcel-report.js is untouched, so a tap on
     // the map is the fallback when location is denied. All this does is make
@@ -512,6 +763,15 @@
 
     const controller = {
       isMobile: true,
+      // The surface manager, for tests and for the console.
+      surfaces: {
+        get open() {
+          return topmost();
+        },
+        close: closeTopmost,
+        closeAll,
+        names: SURFACES.map(s => s.name),
+      },
       setStop,
       get stop() {
         return stop;
