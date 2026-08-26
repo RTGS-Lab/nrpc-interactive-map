@@ -2,3 +2,6 @@ hub_site_content/NRPC-use-cases.md
 
 # Local HTTPS dev certificates — never commit these.
 .dev-certs/
+
+# The Google Maps key lives here and is the user's own.
+js/config.js

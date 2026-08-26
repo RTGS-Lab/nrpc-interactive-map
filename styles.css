@@ -1,6 +1,7 @@
 html,
 body,
 #viewDiv {
+  position: relative;
   padding: 0;
   margin: 0;
   height: 100%;
@@ -1874,4 +1875,515 @@ html.nrpc-mobile #clip-zip-dropdown {
   body.pr-print-ready #mb-scrim {
     display: none !important;
   }
+}
+
+
+
+/* ── Street View Panel ────────────────────────────────────────────────────── */
+
+#street-view-panel {
+  position: fixed;
+  top: 0;
+  right: 0;
+  width: 50vw;
+  height: 100%;
+  background: white;
+  border-left: 1px solid #999;
+  z-index: 150;
+  display: flex;
+  flex-direction: column;
+  transform: translateX(calc(100% + 2px));
+  transition: transform 0.3s ease;
+}
+
+#street-view-panel.open {
+  transform: translateX(0);
+}
+
+#street-view-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 10px;
+  border-bottom: 1px solid #e0e0e0;
+  flex-shrink: 0;
+}
+
+#street-view-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: #323232;
+}
+
+#street-view-close {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 20px;
+  color: #666;
+  line-height: 1;
+  padding: 0;
+}
+
+#street-view-close:hover {
+  color: #323232;
+}
+
+#street-view-location {
+  padding: 5px 10px;
+  font-size: 11px;
+  color: #888;
+  font-family: inherit;
+  border-bottom: 1px solid #e0e0e0;
+  flex-shrink: 0;
+}
+
+/* The stage holds the live panorama; everything else on it is an overlay. */
+#street-view-stage {
+  flex: 1;
+  position: relative;
+  overflow: hidden;
+  background: #f0f0f0;
+  min-height: 0;
+}
+
+/* Google mounts the panorama here and owns everything inside it. */
+#street-view-pano {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+/* "Imagery: May 2024" — centred at the bottom of the picture, per Bryan. */
+#sv-date-badge {
+  position: absolute;
+  bottom: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 3;
+  background: rgba(0, 0, 0, 0.62);
+  color: white;
+  font-size: 12px;
+  font-family: inherit;
+  letter-spacing: 0.02em;
+  padding: 4px 12px;
+  border-radius: 12px;
+  pointer-events: none;
+  white-space: nowrap;
+}
+
+#street-view-no-img {
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  background: #f0f0f0;
+  display: none;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  text-align: center;
+  padding: 20px;
+  color: #888;
+  font-size: 13px;
+  font-family: inherit;
+  line-height: 1.5;
+  white-space: pre-line;
+}
+
+#sv-placeholder {
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  background: #f0f0f0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 20px;
+  color: #aaa;
+  font-size: 13px;
+  font-family: inherit;
+  line-height: 1.5;
+  white-space: pre-line;
+}
+
+#sv-tab {
+  position: absolute;
+  top: 25%;
+  left: -25px;
+  transform: translateY(-50%);
+  width: 25px;
+  height: 64px;
+  background: white;
+  border: 1px solid #999;
+  border-right: none;
+  border-radius: 4px 0 0 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  font-size: 14px;
+  color: #555;
+  user-select: none;
+  padding: 0;
+}
+
+#sv-tab:hover {
+  background: #f0f0f0;
+  color: #222;
+}
+
+/* -- other capture dates: chips when Google gives any, a reason when not -- */
+
+#sv-timeline-row {
+  display: none;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  padding: 6px 10px;
+  border-top: 1px solid #e0e0e0;
+  flex-shrink: 0;
+  font-size: 11px;
+  font-family: inherit;
+  color: #666;
+  min-height: 16px;
+}
+
+#sv-timeline-label {
+  font-weight: 600;
+  color: #555;
+  flex-shrink: 0;
+}
+
+#sv-timeline-chips {
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  /* Take the room that is going, but never squash below a readable chip. */
+  flex: 1 1 140px;
+  min-width: 0;
+  padding-bottom: 2px;
+}
+
+#sv-timeline-note {
+  color: #aaa;
+  font-style: italic;
+}
+
+#sv-maps-link {
+  color: #0079c1;
+  font-size: 11px;
+  text-decoration: underline;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+#sv-maps-link:hover {
+  color: #005a91;
+}
+
+/* Nothing to click, and the row's title attribute says why. */
+#sv-timeline-row.sv-timeline-empty {
+  color: #aaa;
+  cursor: help;
+}
+
+#sv-timeline-row.sv-timeline-empty #sv-timeline-label {
+  color: #aaa;
+  font-weight: 400;
+}
+
+.sv-date-chip {
+  background: #f2f2f2;
+  border: 1px solid #d8d8d8;
+  border-radius: 11px;
+  color: #333;
+  font-size: 11px;
+  font-family: inherit;
+  padding: 2px 10px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.sv-date-chip:hover {
+  background: #e6f0fa;
+  border-color: #0079c1;
+}
+
+.sv-date-chip.current {
+  background: #0079c1;
+  border-color: #0079c1;
+  color: white;
+  cursor: default;
+}
+
+/* -- the pulsing dot on the map, pinned to the panorama's position -- */
+
+#sv-pulse {
+  position: absolute;
+  width: 0;
+  height: 0;
+  z-index: 2;
+  pointer-events: none;
+}
+
+.sv-pulse-dot,
+.sv-pulse-ring {
+  position: absolute;
+  top: 0;
+  left: 0;
+  border-radius: 50%;
+  transform: translate(-50%, -50%);
+}
+
+.sv-pulse-dot {
+  width: 13px;
+  height: 13px;
+  background: #1a73e8;
+  border: 2px solid white;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.35);
+}
+
+.sv-pulse-ring {
+  width: 13px;
+  height: 13px;
+  border: 2px solid #1a73e8;
+  animation: sv-pulse 1.6s ease-out infinite;
+}
+
+@keyframes sv-pulse {
+  0% {
+    width: 13px;
+    height: 13px;
+    opacity: 0.85;
+  }
+  100% {
+    width: 58px;
+    height: 58px;
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sv-pulse-ring {
+    animation: none;
+    opacity: 0.4;
+  }
+}
+
+/* -- API key: entered in the panel, kept in this browser only -- */
+
+#sv-key-form {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0 10px 8px;
+  padding: 10px;
+  border: 1px solid #d8d8d8;
+  border-radius: 4px;
+  background: #fafafa;
+  flex-shrink: 0;
+}
+
+#sv-key-form.hidden {
+  display: none;
+}
+
+.sv-key-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: #323232;
+}
+
+.sv-key-note {
+  font-size: 10px;
+  color: #888;
+  line-height: 1.45;
+}
+
+#sv-key-input {
+  font-size: 12px;
+  font-family: inherit;
+  padding: 6px 7px;
+  border: 1px solid #ccc;
+  border-radius: 3px;
+}
+
+#sv-key-buttons {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+#sv-key-save {
+  background: #0079c1;
+  color: white;
+  border: none;
+  border-radius: 3px;
+  padding: 6px 12px;
+  font-size: 12px;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+#street-view-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 10px;
+  border-top: 1px solid #e0e0e0;
+  flex-shrink: 0;
+  font-size: 11px;
+  font-family: inherit;
+  min-height: 16px;
+}
+
+#sv-key-status {
+  color: #888;
+}
+
+#sv-key-actions {
+  display: flex;
+  gap: 12px;
+  flex-shrink: 0;
+}
+
+.sv-link {
+  background: none;
+  border: none;
+  color: #0079c1;
+  font-size: 11px;
+  font-family: inherit;
+  cursor: pointer;
+  padding: 0;
+  text-decoration: underline;
+}
+
+.sv-link:hover {
+  color: #005a91;
+}
+
+#sv-no-img-key {
+  font-size: 12px;
+}
+
+.sv-link.hidden {
+  display: none;
+}
+
+/* ── Merge (integrate): the two right-hand panels, and the one map click ────
+   The `parcel-report` and `street-view` branches each dock a panel to the
+   right edge at z-index 150. Merged, they landed on top of each other. The
+   report is the primary surface, so it keeps the edge; when it is open the
+   panorama sits beside it instead of over it, and slides out past it when
+   closed. DOM order makes the sibling selector work: parcel-report.js appends
+   its panel during init, main.js appends the Street View panel after. */
+
+#parcel-report-panel.open ~ #street-view-panel {
+  right: 400px;
+  width: min(46vw, 560px);
+}
+
+#parcel-report-panel.open ~ #street-view-panel:not(.open) {
+  transform: translateX(calc(100% + 402px));
+}
+
+/* Both panels put a re-open tab on the right edge at top: 25%, so merged they
+   landed on top of each other (measured: #pr-tab y 173–237, #sv-tab y 141–205).
+   The report's tab keeps the anchor; the panorama's drops below it. #sv-tab
+   also carries translateY(-50%) and #pr-tab does not, so the offset is
+   64 (tab height) + 32 (half of it, back) + 8 (gap) = 104px, and the gap holds
+   at any viewport height because both are 25% of the same full-height panel. */
+#sv-tab {
+  top: calc(25% + 104px);
+}
+
+/* "Street View" in the report header — the parcel you already have open is
+   the common way into the panorama, so the button lives next to the title.
+   The same header is the mobile sheet's header, so this serves both. */
+.pr-header-btn {
+  background: white;
+  color: #0079c1;
+  border: 1px solid #0079c1;
+  border-radius: 3px;
+  font-family: inherit;
+  font-size: 11px;
+  padding: 3px 8px;
+  cursor: pointer;
+  margin-left: auto;
+  margin-right: 8px;
+  white-space: nowrap;
+}
+
+.pr-header-btn:hover {
+  background: #0079c1;
+  color: white;
+}
+
+.pr-header-btn[hidden] {
+  display: none;
+}
+
+/* The toolbar, reparented out of `.esri-ui` (z-index: 0, its own stacking
+   context) and onto <body>, where 200 beats the panels' 150. Positioned at the
+   exact rect view.ui gave it, so the dropdowns main.js places from button
+   rects do not move. Scoped away from the mobile drawer, which owns
+   #toggle-bar's geometry on a phone and must keep it. */
+html.nrpc-toolbar-body:not(.nrpc-mobile) #toggle-bar {
+  position: fixed;
+  top: 15px;
+  left: 15px;
+  z-index: 200;
+}
+
+/* Pick mode: "click the map to look from there". The cursor is the only thing
+   that says the next click will not select a parcel. */
+html.sv-pick-mode #viewDiv,
+html.sv-pick-mode .esri-view-surface {
+  cursor: crosshair;
+}
+
+/* ── Merge (integrate): Street View on a phone ──────────────────────────────
+   One more surface that can cover a 390px map, so it obeys the same rule as
+   the rest — one at a time, bottom-anchored, at the sheet's rung of the
+   stacking ladder (480; the sheet and the panorama are never both open). */
+
+html.nrpc-mobile #street-view-panel {
+  top: auto;
+  bottom: 0;
+  left: 0;
+  right: 0 !important;
+  width: 100% !important;
+  height: calc(var(--mb-vh) * 0.62);
+  border-left: none;
+  border-top: 1px solid #ccc;
+  border-radius: 14px 14px 0 0;
+  box-shadow: 0 -3px 18px rgba(0, 0, 0, 0.2);
+  transform: translateY(calc(100% + 2px)) !important;
+  transition: transform 0.28s ease;
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+  z-index: 480;
+}
+
+html.nrpc-mobile #street-view-panel.open {
+  transform: translateY(0) !important;
+}
+
+html.nrpc-mobile #street-view-header {
+  padding: 10px 12px;
+}
+
+html.nrpc-mobile #street-view-close {
+  width: 44px;
+  height: 44px;
+  font-size: 26px;
+}
+
+/* The desktop's edge tab is a second way in that a phone has no room for.
+   The drawer's "Street View" entry is the way in on mobile. */
+.mb-hidden {
+  display: none !important;
 }

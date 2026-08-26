@@ -2071,6 +2071,14 @@
     // finished, and which model wrote it. Null until one completes — which is
     // exactly the condition the export button appears under.
     let lastReport = null;
+    // Where the current selection was made, in lon/lat. Companion features
+    // (Street View) need the point, not just the attributes.
+    let lastPoint = null;
+    // A companion module may claim a map click before the parcel path sees it
+    // — see setClickInterceptor() below. There is exactly one, because there
+    // is exactly one map-click handler in the app.
+    let clickInterceptor = null;
+    const selectListeners = [];
 
     const getKey = () => {
       try {
@@ -2184,6 +2192,7 @@
       openPanel();
       highlightLayer.removeAll();
 
+      lastPoint = null;
       loadStart = Date.now();
       resetTimings(loadStart);
       return loadStart;
@@ -2209,10 +2218,18 @@
         );
       }
       facts = await assembleFacts(feature, lon, lat);
+      lastPoint = { lon, lat };
       stageTimings.total = { startedAt: 0, ms: Date.now() - loadStart };
       stageTimings.pid = facts && facts.identity ? facts.identity.pid : null;
       showFacts(facts);
       setStatus("");
+      selectListeners.forEach(fn => {
+        try {
+          fn(facts, lastPoint);
+        } catch (e) {
+          console.warn("[parcel-report] onSelect listener failed:", e);
+        }
+      });
       return facts;
     }
 
@@ -2318,10 +2335,37 @@
       else openPanel();
     });
 
+    /**
+     * THE map click handler. There is one, and it lives here.
+     *
+     * MERGE NOTE (integrate, 2026-08-26): the `street-view` branch registered a
+     * second `view.on("click")` that opened its own right-hand panel, so a
+     * merged click opened two panels on top of each other. Rather than let two
+     * features race for the same gesture, the primary action — select the
+     * parcel, open its report — stays here and unconditional, and a companion
+     * feature may CLAIM a click by registering an interceptor that returns
+     * true. Street View registers one, and only claims while the user has its
+     * pick mode switched on.
+     */
+    async function handleMapClick(lat, lon, event) {
+      if (typeof lat !== "number" || typeof lon !== "number") return null;
+      if (clickInterceptor) {
+        let claimed = false;
+        try {
+          claimed = clickInterceptor(lat, lon, event) === true;
+        } catch (e) {
+          console.warn("[parcel-report] click interceptor failed:", e);
+        }
+        if (claimed) return "intercepted";
+      }
+      await loadParcel(lon, lat);
+      return "parcel";
+    }
+
     view.on("click", async event => {
       const pt = event.mapPoint;
       if (!pt || typeof pt.latitude !== "number") return;
-      await loadParcel(pt.longitude, pt.latitude);
+      await handleMapClick(pt.latitude, pt.longitude, event);
     });
 
     // Dev hooks. Nothing in the UI calls these. They exist so the export path
@@ -2334,6 +2378,13 @@
     //   NRPCParcelReport.dev.buildPrintDoc()   // fills #pr-print, no dialog
     window.NRPCParcelReport.dev = {
       loadParcel,
+      // The body of the one map-click handler, callable without the map's
+      // pointer pipeline. ArcGIS's own input manager does not turn synthesized
+      // CDP pointer events into a view "click" in a background tab, so this is
+      // how the click path — interceptor first, parcel second — is exercised
+      // in a test. Returns "intercepted" or "parcel".
+      mapClick: (lat, lon) => handleMapClick(lat, lon, null),
+      hasClickInterceptor: () => !!clickInterceptor,
       // Wall-clock per stage for the last parcel loaded, in ms, with the
       // offset from the click at which each stage started — that is what
       // shows adjacency running alongside the context fetches rather than
@@ -2380,6 +2431,21 @@
       },
       hasFacts: () => !!facts,
       onExport: fn => exportBtn.addEventListener("click", fn),
+      // Where the open report's parcel is, or null.
+      lastPoint: () => (lastPoint ? { ...lastPoint } : null),
+      // Called after every successful selection, with (facts, point).
+      onSelect: fn => {
+        if (typeof fn === "function") selectListeners.push(fn);
+      },
+      /**
+       * Hand a companion feature the right of first refusal on a map click.
+       * fn(lat, lon, event) returns true to claim it — in which case no parcel
+       * is selected for that click. One interceptor at a time, deliberately:
+       * two features silently fighting over a click is the bug this replaces.
+       */
+      setClickInterceptor: fn => {
+        clickInterceptor = typeof fn === "function" ? fn : null;
+      },
     };
     window.NRPCParcelReport.api = api;
 

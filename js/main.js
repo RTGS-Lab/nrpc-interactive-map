@@ -9,7 +9,8 @@ require([
   "esri/Graphic",
   "esri/Basemap",
   "esri/geometry/geometryEngine",
-], (WebMap, MapView, Home, LayerList, Legend, Editor, GraphicsLayer, Graphic, Basemap, geometryEngine) => {
+  "esri/geometry/Point",
+], (WebMap, MapView, Home, LayerList, Legend, Editor, GraphicsLayer, Graphic, Basemap, geometryEngine, Point) => {
 
   const webmap = new WebMap({
     portalItem: {
@@ -1189,5 +1190,1155 @@ require([
     if (window.NRPCParcelReport) {
       window.NRPCParcelReport.init({ view, Graphic, GraphicsLayer });
     }
+
+    // ── Street View Panel ─────────────────────────────────────────────────
+    //
+    // A real panorama, not a photo. `google.maps.StreetViewPanorama` from the
+    // Maps JavaScript API gives us, for free, everything Bryan asked for:
+    // the chevron arrows along the road (`linksControl`), click-to-move to the
+    // next scene (`clickToGo`), drag to look around, and keyboard arrows once
+    // the panorama has focus. The old static `<img>` + heading slider was an
+    // imitation of all of that; it is gone, and so is the ArcGIS aerial
+    // fallback — the map underneath already has an aerial basemap.
+    //
+    // API key: the user's, not the repo's — the same deal the Parcel Report
+    // makes for its Anthropic key. It is typed into the panel, kept in
+    // localStorage on that one browser, and sent only to maps.googleapis.com.
+    // It is never committed and never logged.
+    //
+    // Resolution order, first hit wins:
+    //   1. localStorage — what the user typed here.
+    //   2. window.STREET_VIEW_API_KEY from js/config.js — still how the
+    //      deployed site gets its key (GitHub Actions writes config.js at
+    //      deploy time from the GOOGLE_STREET_VIEW_API_KEY secret; locally
+    //      `cp js/config.example.js js/config.js`). Any deployed key MUST be
+    //      HTTP-referrer-restricted in the Google Cloud console — it ships to
+    //      the browser in a public site.
+    //   3. Ask, once, in the panel.
+    //
+    // The key now needs BOTH "Maps JavaScript API" (the panorama) and
+    // "Street View Static API" (the free metadata pre-check) enabled on it.
+
+    const SV_STORAGE_KEY = "nrpc-street-view.apiKey";
+
+    function svStoredKey() {
+      try {
+        return (localStorage.getItem(SV_STORAGE_KEY) || "").trim();
+      } catch (_) {
+        // Private mode / blocked storage — behave as if nothing is stored.
+        return "";
+      }
+    }
+
+    function svConfigKey() {
+      return typeof STREET_VIEW_API_KEY === "string" &&
+        STREET_VIEW_API_KEY.trim() &&
+        !STREET_VIEW_API_KEY.startsWith("YOUR_")
+        ? STREET_VIEW_API_KEY.trim()
+        : "";
+    }
+
+    // The live key and where it came from. Recomputed whenever the user saves
+    // or clears, so clearing a typed key falls back to config.js rather than
+    // to nothing.
+    let svKey = null;
+    let svKeySource = "none"; // "stored" | "config" | "none"
+
+    function svResolveKey() {
+      const stored = svStoredKey();
+      if (stored) {
+        svKey = stored;
+        svKeySource = "stored";
+        return;
+      }
+      const cfg = svConfigKey();
+      if (cfg) {
+        svKey = cfg;
+        svKeySource = "config";
+        return;
+      }
+      svKey = null;
+      svKeySource = "none";
+    }
+
+    svResolveKey();
+
+    // Asked once per page load, and once declined it stays declined for the
+    // session — clicking the map keeps working, the panel just says so.
+    let svKeyAsked = false;
+    let svKeyDeclined = false;
+
+    const svPanel = document.createElement("div");
+    svPanel.id = "street-view-panel";
+
+    const svHeader = document.createElement("div");
+    svHeader.id = "street-view-header";
+    const svTitle = document.createElement("span");
+    svTitle.id = "street-view-title";
+    svTitle.textContent = "Street View";
+    const svClose = document.createElement("button");
+    svClose.id = "street-view-close";
+    svClose.textContent = "×";
+    svClose.title = "Close";
+    svHeader.append(svTitle, svClose);
+
+    const svLocation = document.createElement("div");
+    svLocation.id = "street-view-location";
+
+    // The stage: the panorama fills it, and everything else (date badge,
+    // messages, placeholder) is an overlay on top of it.
+    const svStage = document.createElement("div");
+    svStage.id = "street-view-stage";
+
+    // Google mounts the panorama into this div and owns its contents.
+    const svPanoDiv = document.createElement("div");
+    svPanoDiv.id = "street-view-pano";
+
+    // "Imagery: May 2024", centred at the bottom of the picture. Only ever
+    // shows a date Google actually gave us — never a placeholder.
+    const svDateBadge = document.createElement("div");
+    svDateBadge.id = "sv-date-badge";
+    svDateBadge.style.display = "none";
+
+    const svNoImg = document.createElement("div");
+    svNoImg.id = "street-view-no-img";
+    const svNoImgText = document.createElement("span");
+    svNoImgText.id = "sv-no-img-text";
+    svNoImgText.textContent = "No Street View imagery available near this location.";
+    // Only shown when the message is about the key rather than the imagery.
+    const svNoImgKeyBtn = document.createElement("button");
+    svNoImgKeyBtn.type = "button";
+    svNoImgKeyBtn.id = "sv-no-img-key";
+    svNoImgKeyBtn.className = "sv-link hidden";
+    svNoImgKeyBtn.textContent = "Change key";
+    svNoImg.append(svNoImgText, svNoImgKeyBtn);
+
+    const svPlaceholder = document.createElement("div");
+    svPlaceholder.id = "sv-placeholder";
+
+    svStage.append(svPanoDiv, svDateBadge, svNoImg, svPlaceholder);
+
+    // -- timeline row: chips for other capture dates, when Google gives any --
+    const svTimelineRow = document.createElement("div");
+    svTimelineRow.id = "sv-timeline-row";
+    svTimelineRow.style.display = "none";
+    const svTimelineLabel = document.createElement("span");
+    svTimelineLabel.id = "sv-timeline-label";
+    svTimelineLabel.textContent = "Other dates";
+    const svTimelineChips = document.createElement("div");
+    svTimelineChips.id = "sv-timeline-chips";
+    const svTimelineNote = document.createElement("span");
+    svTimelineNote.id = "sv-timeline-note";
+    // "See more dates" is a Google Maps end-user feature with no API surface,
+    // so when we cannot offer a timeline we hand the exact panorama over to
+    // the one place that can. Documented Maps URL: map_action=pano&pano=<id>.
+    const svMapsLink = document.createElement("a");
+    svMapsLink.id = "sv-maps-link";
+    svMapsLink.target = "_blank";
+    svMapsLink.rel = "noopener noreferrer";
+    svMapsLink.textContent = "See more dates in Google Maps ↗";
+    svMapsLink.style.display = "none";
+    svTimelineRow.append(svTimelineLabel, svTimelineChips, svTimelineNote, svMapsLink);
+
+    // -- key form: an in-panel input, never a window.prompt --
+    const svKeyForm = document.createElement("form");
+    svKeyForm.id = "sv-key-form";
+    svKeyForm.className = "hidden";
+    const svKeyLabel = document.createElement("div");
+    svKeyLabel.className = "sv-key-label";
+    svKeyLabel.textContent = "Google Maps API key";
+    const svKeyInput = document.createElement("input");
+    svKeyInput.type = "password";
+    svKeyInput.id = "sv-key-input";
+    svKeyInput.placeholder = "AIza…";
+    svKeyInput.autocomplete = "off";
+    svKeyInput.spellcheck = false;
+    const svKeyButtons = document.createElement("div");
+    svKeyButtons.id = "sv-key-buttons";
+    const svKeySave = document.createElement("button");
+    svKeySave.type = "submit";
+    svKeySave.id = "sv-key-save";
+    svKeySave.textContent = "Save key";
+    const svKeySkip = document.createElement("button");
+    svKeySkip.type = "button";
+    svKeySkip.id = "sv-key-skip";
+    svKeySkip.className = "sv-link";
+    svKeySkip.textContent = "Not now";
+    svKeyButtons.append(svKeySave, svKeySkip);
+    const svKeyNote = document.createElement("div");
+    svKeyNote.className = "sv-key-note";
+    svKeyNote.textContent =
+      "Needs Maps JavaScript API + Street View Static API enabled. Kept in " +
+      "this browser's localStorage only. Never committed, never sent anywhere " +
+      "but maps.googleapis.com. Use a referrer-restricted key.";
+    svKeyForm.append(svKeyLabel, svKeyInput, svKeyButtons, svKeyNote);
+
+    // -- footer: the one line that says what the key situation is --
+    const svFooter = document.createElement("div");
+    svFooter.id = "street-view-footer";
+    const svKeyStatus = document.createElement("span");
+    svKeyStatus.id = "sv-key-status";
+    const svKeyActions = document.createElement("span");
+    svKeyActions.id = "sv-key-actions";
+    const svKeySetBtn = document.createElement("button");
+    svKeySetBtn.type = "button";
+    svKeySetBtn.id = "sv-key-set";
+    svKeySetBtn.className = "sv-link";
+    const svKeyClearBtn = document.createElement("button");
+    svKeyClearBtn.type = "button";
+    svKeyClearBtn.id = "sv-key-clear";
+    svKeyClearBtn.className = "sv-link";
+    svKeyClearBtn.textContent = "Clear key";
+    svKeyActions.append(svKeySetBtn, svKeyClearBtn);
+    svFooter.append(svKeyStatus, svKeyActions);
+
+    const svTab = document.createElement("button");
+    svTab.id = "sv-tab";
+    svTab.textContent = "◀";
+    svTab.title = "Toggle Street View";
+
+    svPanel.append(svHeader, svLocation, svStage, svTimelineRow, svKeyForm, svFooter);
+    svPanel.appendChild(svTab);
+    document.body.appendChild(svPanel);
+
+    let svLat = null;
+    let svLng = null;
+    // Which of the stage's mutually exclusive states is up. The date badge and
+    // the dates row belong to the picture, so they only ever show over "pano";
+    // a late service callback must not paint them over an error message.
+    let svStageState = "placeholder"; // "placeholder" | "checking" | "message" | "pano"
+
+    function svPromptText() {
+      return svKey
+        ? "Click anywhere on the map to load Street View."
+        : "Click anywhere on the map to load Street View.\n" +
+          "Add a Google Maps API key below to enable it.";
+    }
+
+    // ── Panel states ─────────────────────────────────────────────────────
+    //
+    // Exactly one of these three is visible on the stage at a time: the
+    // panorama, a message, or the "click the map" placeholder.
+
+    function svShowPlaceholder() {
+      svStageState = "placeholder";
+      svPlaceholder.textContent = svPromptText();
+      svPlaceholder.style.display = "flex";
+      svNoImg.style.display = "none";
+      svPanoDiv.style.visibility = "hidden";
+      svDateBadge.style.display = "none";
+      svTimelineRow.style.display = "none";
+      if (svPano) svPano.setVisible(false);
+      svClearMapLink();
+    }
+
+    function svShowMessage(text, offerKey) {
+      svStageState = "message";
+      svNoImgText.textContent = text;
+      svNoImgKeyBtn.classList.toggle("hidden", !offerKey);
+      svNoImg.style.display = "flex";
+      svPlaceholder.style.display = "none";
+      svPanoDiv.style.visibility = "hidden";
+      svDateBadge.style.display = "none";
+      svTimelineRow.style.display = "none";
+      if (svPano) svPano.setVisible(false);
+      svClearMapLink();
+    }
+
+    function svShowChecking() {
+      svStageState = "checking";
+      svPlaceholder.textContent = "Checking Street View…";
+      svPlaceholder.style.display = "flex";
+      svNoImg.style.display = "none";
+      svPanoDiv.style.visibility = "hidden";
+      svDateBadge.style.display = "none";
+      svTimelineRow.style.display = "none";
+    }
+
+    function svShowPano() {
+      svStageState = "pano";
+      svPlaceholder.style.display = "none";
+      svNoImg.style.display = "none";
+      svPanoDiv.style.visibility = "visible";
+      if (svPano) {
+        svPano.setVisible(true);
+        // The panel slides in, so the div had no size when Google measured it.
+        requestAnimationFrame(() => google.maps.event.trigger(svPano, "resize"));
+      }
+    }
+
+    // Everything that has to change when the key comes or goes.
+    function svRefreshKeyUi() {
+      if (svKey) {
+        svKeyStatus.textContent =
+          svKeySource === "config"
+            ? "Maps API key from config.js."
+            : "Maps API key saved in this browser.";
+        svKeySetBtn.textContent = "Change key";
+        svKeyClearBtn.classList.toggle("hidden", svKeySource !== "stored");
+      } else {
+        svKeyStatus.textContent = "No API key — Street View is unavailable.";
+        svKeySetBtn.textContent = "Add key";
+        svKeyClearBtn.classList.add("hidden");
+      }
+    }
+
+    function svShowKeyForm() {
+      svKeyAsked = true;
+      svKeyForm.classList.remove("hidden");
+      svKeyInput.focus();
+    }
+
+    function svHideKeyForm() {
+      svKeyForm.classList.add("hidden");
+      svKeyInput.value = "";
+    }
+
+    // ── Map ↔ panorama link ──────────────────────────────────────────────
+    //
+    // A pulsing dot where the camera is, and a wedge showing which way it is
+    // facing. Both follow the panorama as the user walks down the road, and
+    // the map keeps the dot centred, so the map is always a legend for the
+    // picture. Both appear when the panel opens and go when it closes.
+    //
+    // The dot is an HTML element rather than a Graphic: ArcGIS symbols cannot
+    // animate, and a CSS keyframe pulse is the repo's plainest way to get one.
+    // It is positioned from view.toScreen() on every extent change, which
+    // includes each frame of the recentre animation. The cone stays a Graphic
+    // because it is a real geographic wedge and should scale with the zoom.
+
+    const SV_CONE_SYMBOL = {
+      type: "simple-fill",
+      color: [26, 115, 232, 0.28],
+      outline: { color: [26, 115, 232, 0.55], width: 1 }
+    };
+
+    const svPulse = document.createElement("div");
+    svPulse.id = "sv-pulse";
+    svPulse.style.display = "none";
+    const svPulseRing = document.createElement("span");
+    svPulseRing.className = "sv-pulse-ring";
+    const svPulseDot = document.createElement("span");
+    svPulseDot.className = "sv-pulse-dot";
+    svPulse.append(svPulseRing, svPulseDot);
+    view.container.appendChild(svPulse);
+
+    let svConeGraphic = null;
+    let svConePending = false;
+    // The map point the dot is pinned to, in the view's own spatial reference.
+    let svPinPoint = null;
+
+    // Never fight the user: while a drag or a wheel-zoom is in flight the
+    // panorama moves the dot but leaves the map where they put it.
+    let svUserInteracting = false;
+    let svInteractionTimer = null;
+    // The panel takes 0.3s to slide. Measuring how much map it covers while it
+    // is still moving gives the wrong answer, and a recentre fired on that
+    // measurement then races the corrected one — the dot ends up somewhere
+    // between the two. Only recentre once the panel has settled.
+    let svPanelSliding = false;
+    let svPanelSlideTimer = null;
+    // One recentre animation at a time, for the same reason: a second goTo
+    // launched mid-flight measures a position that is still moving.
+    let svRecenterInFlight = false;
+    let svRecenterWanted = false;
+
+    function svPanelSlideDone() {
+      if (svPanelSlideTimer) clearTimeout(svPanelSlideTimer);
+      svPanelSlideTimer = null;
+      svPanelSliding = false;
+    }
+
+    function svPanelSlideStart() {
+      svPanelSliding = true;
+      if (svPanelSlideTimer) clearTimeout(svPanelSlideTimer);
+      // transitionend does not fire if the transition is disabled (reduced
+      // motion, or a browser that skips it), so never wait on it forever.
+      svPanelSlideTimer = setTimeout(() => {
+        svPanelSlideDone();
+        svPositionPulse();
+        svRecenter();
+      }, 500);
+    }
+
+    function svMarkInteraction(active) {
+      if (svInteractionTimer) clearTimeout(svInteractionTimer);
+      svUserInteracting = active;
+      // The timer runs in both directions on purpose. Coming out of a drag it
+      // is a grace period, so the inertia of a flick does not get yanked back.
+      // Going in, it is a watchdog: a "drag" that starts and never ends would
+      // otherwise leave the flag stuck and kill recentring for the session.
+      svInteractionTimer = setTimeout(() => {
+        svUserInteracting = false;
+        svInteractionTimer = null;
+      }, active ? 4000 : 600);
+    }
+
+    // Only a drag that actually moves counts. A plain map click still emits
+    // "start" and "end", and treating "start" as interaction made every first
+    // click skip its own recentre — the dot landed under the panel edge.
+    view.on("drag", e => {
+      if (e.action === "end") svMarkInteraction(false);
+      else if (e.action === "update") svMarkInteraction(true);
+    });
+    view.on("mouse-wheel", () => {
+      svMarkInteraction(true);
+      svMarkInteraction(false);
+    });
+
+    // Keep the dot glued to its map point through pan, zoom and animation.
+    // view.toScreen() declines to project while the view is still settling —
+    // right after the panel opens, which is exactly when the dot is first
+    // placed — so a refusal is retried on the next frame instead of leaving
+    // the dot hidden until something else happens to move the map.
+    let svPulseRetries = 0;
+    function svPositionPulse() {
+      if (!svPinPoint || !svPanel.classList.contains("open")) {
+        svPulse.style.display = "none";
+        svPulseRetries = 0;
+        return;
+      }
+      let sp = null;
+      try {
+        sp = view.toScreen(svPinPoint);
+      } catch (_) {
+        sp = null;
+      }
+      if (!sp || typeof sp.x !== "number" || !isFinite(sp.x)) {
+        svPulse.style.display = "none";
+        if (svPulseRetries < 60) {
+          svPulseRetries++;
+          requestAnimationFrame(svPositionPulse);
+        }
+        return;
+      }
+      svPulseRetries = 0;
+      svPulse.style.left = `${sp.x}px`;
+      svPulse.style.top = `${sp.y}px`;
+      svPulse.style.display = "block";
+    }
+
+    view.watch("extent", svPositionPulse);
+    view.watch("rotation", svPositionPulse);
+
+    // Centre the dot in the map the user can actually see — the panel covers
+    // the right half of the window, so the true container centre would park
+    // the dot underneath it.
+    function svRecenter() {
+      if (!svPinPoint || svUserInteracting || !svPanel.classList.contains("open")) return;
+      if (svPanelSliding) return;
+      if (svRecenterInFlight) {
+        // Let the one in flight land, then correct from where it actually got.
+        svRecenterWanted = true;
+        return;
+      }
+      const rect = view.container.getBoundingClientRect();
+      if (!rect.width || !rect.height) return;
+      const panelRect = svPanel.getBoundingClientRect();
+      const covered = Math.max(0, rect.right - panelRect.left);
+      const desiredX = Math.max(40, (rect.width - covered) / 2);
+      const desiredY = rect.height / 2;
+      const sp = view.toScreen(svPinPoint);
+      if (!sp) return;
+      // Whatever map point sits this far from the dot must become the centre
+      // for the dot to land on (desiredX, desiredY). Zoom is left alone —
+      // recentring already brings an off-screen dot into view.
+      const dx = rect.width / 2 - desiredX;
+      const dy = rect.height / 2 - desiredY;
+      const newCenter = view.toMap({ x: sp.x + dx, y: sp.y + dy });
+      if (!newCenter) return;
+      svRecenterInFlight = true;
+      view.goTo({ center: newCenter }, { duration: 350, easing: "ease-out" }).then(
+        () => {
+          svRecenterInFlight = false;
+          svPositionPulse();
+          if (svRecenterWanted) {
+            svRecenterWanted = false;
+            svRecenter();
+          }
+        },
+        () => {
+          // goTo rejects when the user interrupts the animation. That is the
+          // user winning, so drop the follow-up rather than yanking the map
+          // back out from under them.
+          svRecenterInFlight = false;
+          svRecenterWanted = false;
+        }
+      );
+    }
+
+    // A wedge of `halfAngle` either side of `heading`, `radiusM` long, built
+    // in plain lat/lng. Good enough at these radii; no projection needed.
+    function svConeRing(lat, lng, heading, radiusM = 45, halfAngle = 26) {
+      const mPerDegLat = 110540;
+      const mPerDegLng = 111320 * Math.cos((lat * Math.PI) / 180) || 1;
+      const ring = [[lng, lat]];
+      for (let a = -halfAngle; a <= halfAngle; a += 4) {
+        const th = ((heading + a) * Math.PI) / 180;
+        ring.push([
+          lng + (Math.sin(th) * radiusM) / mPerDegLng,
+          lat + (Math.cos(th) * radiusM) / mPerDegLat
+        ]);
+      }
+      ring.push([lng, lat]);
+      return ring;
+    }
+
+    function svClearMapLink() {
+      svPinPoint = null;
+      svPulse.style.display = "none";
+      if (svConeGraphic) {
+        view.graphics.remove(svConeGraphic);
+        svConeGraphic = null;
+      }
+    }
+
+    // `recenter` is true only when the panorama moved to a new place —
+    // turning the camera should not drag the map around under it.
+    function svDrawMapLink(lat, lng, heading, recenter) {
+      // A real Point, not an autocast literal: Graphic will autocast its
+      // geometry but view.toScreen() will not, and it fails the projection
+      // with "mapview:projection-not-possible" rather than telling you why.
+      svPinPoint = new Point({
+        longitude: lng,
+        latitude: lat,
+        spatialReference: { wkid: 4326 }
+      });
+      const cone = {
+        type: "polygon",
+        rings: [svConeRing(lat, lng, heading)],
+        spatialReference: { wkid: 4326 }
+      };
+      if (svConeGraphic) {
+        svConeGraphic.geometry = cone;
+      } else {
+        svConeGraphic = new Graphic({ geometry: cone, symbol: SV_CONE_SYMBOL });
+        view.graphics.add(svConeGraphic);
+      }
+      svPositionPulse();
+      if (recenter) svRecenter();
+    }
+
+    // pov_changed fires on every frame of a drag; redraw at most once a frame.
+    let svPendingRecenter = false;
+    function svScheduleMapLink(recenter) {
+      if (recenter) svPendingRecenter = true;
+      if (svConePending || svLat === null || !svPano) return;
+      svConePending = true;
+      requestAnimationFrame(() => {
+        svConePending = false;
+        const wantRecenter = svPendingRecenter;
+        svPendingRecenter = false;
+        if (svLat === null || !svPano) return;
+        const pov = svPano.getPov() || { heading: 0 };
+        svDrawMapLink(svLat, svLng, pov.heading || 0, wantRecenter);
+      });
+    }
+
+    // ── Loading the Maps JavaScript API ──────────────────────────────────
+    //
+    // Loaded on demand — no key, no request, and nothing from Google on a
+    // page nobody opened the panel on. The API can only be bootstrapped once
+    // per page load with one key, so changing the key needs a reload; the
+    // footer says so rather than failing silently.
+
+    let svApiPromise = null;
+    let svApiLoadedKey = null;
+    let svAuthFailed = false;
+
+    // Google calls this global on any authentication failure — bad key, key
+    // not authorised for this referrer, JS API not enabled, billing off. It
+    // is the only signal the JS API gives; there is no per-call error.
+    window.gm_authFailure = () => {
+      svAuthFailed = true;
+      svShowMessage(
+        "Google rejected this API key for Street View. Check that the key has " +
+        "the Maps JavaScript API enabled and that this site is in the key's " +
+        "HTTP referrer allow-list.",
+        true
+      );
+      svKeyStatus.textContent = "Maps API key was refused by Google.";
+      // The Static metadata endpoint reports the same class of problem in
+      // words, and for a referrer-restricted key it names the referer it saw
+      // — the one fact that fixes it. Best effort, clearly attributed.
+      svExplainAuthFailure();
+    };
+
+    function svLoadMapsApi(key) {
+      if (svApiPromise) return svApiPromise;
+      svApiLoadedKey = key;
+      svApiPromise = new Promise((resolve, reject) => {
+        if (window.google && window.google.maps && google.maps.StreetViewPanorama) {
+          resolve();
+          return;
+        }
+        const cb = "__nrpcMapsApiReady";
+        window[cb] = () => {
+          try { delete window[cb]; } catch (_) { window[cb] = undefined; }
+          resolve();
+        };
+        const s = document.createElement("script");
+        s.async = true;
+        s.src =
+          "https://maps.googleapis.com/maps/api/js?key=" +
+          encodeURIComponent(key) +
+          "&v=weekly&loading=async&callback=" + cb;
+        s.onerror = () => {
+          try { delete window[cb]; } catch (_) { window[cb] = undefined; }
+          svApiPromise = null;
+          svApiLoadedKey = null;
+          reject(new Error("maps-js-load-failed"));
+        };
+        document.head.appendChild(s);
+      });
+      return svApiPromise;
+    }
+
+    // ── The panorama itself ──────────────────────────────────────────────
+
+    let svPano = null;
+    let svService = null;
+    let svPanoToken = 0;
+
+    function svEnsurePano() {
+      if (svPano) return;
+      svService = new google.maps.StreetViewService();
+      svPano = new google.maps.StreetViewPanorama(svPanoDiv, {
+        visible: false,
+        // The two controls Bryan asked for by name.
+        linksControl: true,   // the chevron arrows along the road
+        clickToGo: true,      // click the road to walk to the next scene
+        panControl: true,
+        zoomControl: true,
+        scrollwheel: true,
+        showRoadLabels: true,
+        // Chrome we do not want: the panel has its own header and close, the
+        // date gets its own centred badge, and motion tracking is meaningless
+        // on a desktop planning map.
+        addressControl: false,
+        fullscreenControl: false,
+        enableCloseButton: false,
+        imageDateControl: false,
+        motionTracking: false,
+        motionTrackingControl: false
+      });
+
+      // Walking to a new scene moves the dot and re-reads the date.
+      svPano.addListener("position_changed", () => {
+        const pos = svPano.getPosition();
+        if (!pos) return;
+        svLat = pos.lat();
+        svLng = pos.lng();
+        svLocation.textContent = `${svLat.toFixed(6)}, ${svLng.toFixed(6)}`;
+        svScheduleMapLink(true);
+      });
+
+      // Turning the camera redraws the cone but must not move the map.
+      svPano.addListener("pov_changed", () => svScheduleMapLink(false));
+
+      svPano.addListener("pano_changed", () => {
+        const id = svPano.getPano();
+        if (id) svUpdateDateFor(id);
+      });
+    }
+
+    // ── The imagery date, and the honest answer on a timeline ────────────
+    //
+    // `StreetViewPanoramaData.imageDate` is documented and gives "YYYY-MM".
+    // It is not on the panorama object, so it comes from a StreetViewService
+    // lookup of the pano id we are currently showing.
+    //
+    // A list of *other* capture dates is a different matter — see
+    // docs/dev-notes.md. Google's own Maps UI has "See more dates"; no
+    // documented developer API exposes it. Some builds of the JS API return
+    // an undocumented `time` array on StreetViewPanoramaData; we feature-
+    // detect it and render chips when it is there, and say plainly that
+    // there are no other dates available when it is not. Nothing here breaks
+    // if Google removes the field, and nothing here invents a date.
+
+    function svFormatImageDate(raw) {
+      // Documented as "YYYY-MM", but Google warns the granularity varies and
+      // some panoramas come back as a bare "YYYY" — so parse defensively and
+      // show whatever precision we were actually given.
+      const t = String(raw || "").trim();
+      const m = /^(\d{4})(?:-(\d{2}))?/.exec(t);
+      if (!m) return t;
+      if (!m[2]) return m[1];
+      const months = ["January", "February", "March", "April", "May", "June",
+        "July", "August", "September", "October", "November", "December"];
+      const mi = Number(m[2]) - 1;
+      return months[mi] ? `${months[mi]} ${m[1]}` : m[1];
+    }
+
+    function svSetDateBadge(raw) {
+      const text = svStageState === "pano" && raw ? svFormatImageDate(raw) : "";
+      if (!text) {
+        // Never a placeholder date. No date, no badge.
+        svDateBadge.style.display = "none";
+        svDateBadge.textContent = "";
+        return;
+      }
+      svDateBadge.textContent = `Imagery: ${text}`;
+      svDateBadge.style.display = "block";
+    }
+
+    // Undocumented, feature-detected. Returns [{pano, label}] or [].
+    function svOtherDates(data) {
+      const times = data && data.time;
+      if (!Array.isArray(times) || !times.length) return [];
+      const out = [];
+      for (const t of times) {
+        if (!t || typeof t !== "object") continue;
+        // The id key and the date key have both been renamed by Google's
+        // minifier over the years, so go looking rather than assuming.
+        let pano = t.pano || t.panoId || null;
+        let when = null;
+        for (const [k, v] of Object.entries(t)) {
+          if (!pano && typeof v === "string" && /^[A-Za-z0-9_-]{20,}$/.test(v)) pano = v;
+          if (!when && v instanceof Date) when = v;
+          if (!when && typeof v === "string" && /^\d{4}-\d{2}/.test(v)) when = v;
+        }
+        if (!pano) continue;
+        const label = when instanceof Date
+          ? svFormatImageDate(
+              `${when.getFullYear()}-${String(when.getMonth() + 1).padStart(2, "0")}`
+            )
+          : when ? svFormatImageDate(when) : "";
+        out.push({ pano, label });
+      }
+      return out.filter(d => d.label);
+    }
+
+    function svRenderTimeline(data, currentPano) {
+      const dates = svOtherDates(data);
+      svTimelineChips.textContent = "";
+      if (svStageState !== "pano") {
+        // A service callback that outran an error or a close. The row belongs
+        // to a picture that is not on screen.
+        svTimelineRow.style.display = "none";
+        return;
+      }
+      if (currentPano) {
+        svMapsLink.href =
+          "https://www.google.com/maps/@?api=1&map_action=pano&pano=" +
+          encodeURIComponent(currentPano);
+        svMapsLink.style.display = "inline";
+      } else {
+        svMapsLink.style.display = "none";
+      }
+      if (!dates.length) {
+        // Say why there is nothing here, once, quietly.
+        svTimelineNote.textContent = "not published by the Maps API —";
+        svTimelineRow.title =
+          "No Google API lists a location's other capture dates: " +
+          "StreetViewPanoramaData carries one imageDate, and its links are " +
+          "the adjacent panoramas of the same survey, not earlier ones. " +
+          "\"See more dates\" is a Google Maps end-user feature with no " +
+          "developer equivalent, so this panel shows the date of the imagery " +
+          "you are looking at and hands the rest to Google Maps.";
+        svTimelineRow.classList.add("sv-timeline-empty");
+        svTimelineRow.style.display = "flex";
+        return;
+      }
+      svTimelineNote.textContent = "";
+      svTimelineRow.title = "";
+      svTimelineRow.classList.remove("sv-timeline-empty");
+      for (const d of dates) {
+        const chip = document.createElement("button");
+        chip.type = "button";
+        chip.className = "sv-date-chip";
+        chip.textContent = d.label;
+        if (d.pano === currentPano) chip.classList.add("current");
+        chip.addEventListener("click", () => {
+          if (svPano) svPano.setPano(d.pano);
+        });
+        svTimelineChips.appendChild(chip);
+      }
+      svTimelineRow.style.display = "flex";
+    }
+
+    function svUpdateDateFor(panoId) {
+      if (!svService) return;
+      svService.getPanorama({ pano: panoId }, (data, status) => {
+        if (status !== google.maps.StreetViewStatus.OK || !data) {
+          svSetDateBadge(null);
+          svRenderTimeline(null, panoId);
+          return;
+        }
+        svSetDateBadge(data.imageDate);
+        svRenderTimeline(data, panoId);
+      });
+    }
+
+    // ── Is there a photo here, or is the key the problem? ────────────────
+    //
+    // The free, CORS-enabled Street View Static metadata endpoint is kept for
+    // one job only: turning an auth failure into words. The JS API's
+    // gm_authFailure tells us *that* the key was refused but never *why*;
+    // this endpoint answers in Google's own sentence, and on a referrer-
+    // restricted key it names the referer it actually saw.
+    const SV_META_URL = "https://maps.googleapis.com/maps/api/streetview/metadata";
+
+    async function svExplainAuthFailure() {
+      if (!svKey || svLat === null) return;
+      try {
+        const url =
+          `${SV_META_URL}?location=${svLat},${svLng}&radius=1000&source=outdoor` +
+          `&key=${encodeURIComponent(svKey)}`;
+        const res = await fetch(url);
+        const meta = await res.json();
+        const detail = String((meta && meta.error_message) || "").trim();
+        if (!detail) return;
+        svNoImgText.textContent =
+          svNoImgText.textContent + "\n\nGoogle says: " + detail;
+      } catch (_) {
+        // Offline or blocked. The generic message already told the story.
+      }
+    }
+
+    // ── Opening a location ───────────────────────────────────────────────
+
+    async function svGoTo(lat, lng) {
+      const token = ++svPanoToken;
+      svShowChecking();
+
+      try {
+        await svLoadMapsApi(svKey);
+      } catch (_) {
+        if (token !== svPanoToken) return;
+        svShowMessage(
+          "Could not load the Google Maps JavaScript API — check the network " +
+          "connection and that the key's project has that API enabled.",
+          true
+        );
+        return;
+      }
+      if (token !== svPanoToken) return;
+      if (svAuthFailed) return; // gm_authFailure has put its own message up.
+
+      svEnsurePano();
+
+      svService.getPanorama(
+        {
+          location: { lat, lng },
+          radius: 1000,
+          source: google.maps.StreetViewSource.OUTDOOR,
+          preference: google.maps.StreetViewPreference.NEAREST
+        },
+        (data, status) => {
+          if (token !== svPanoToken) return;
+          if (status === google.maps.StreetViewStatus.OK && data && data.location) {
+            svPano.setPano(data.location.pano);
+            svPano.setPov({ heading: svHeadingTowards(data.location.latLng, lat, lng), pitch: 0 });
+            svShowPano();
+            svSetDateBadge(data.imageDate);
+            svRenderTimeline(data, data.location.pano);
+            const p = data.location.latLng;
+            svLat = p.lat();
+            svLng = p.lng();
+            svLocation.textContent = `${svLat.toFixed(6)}, ${svLng.toFixed(6)}`;
+            svScheduleMapLink(true);
+            return;
+          }
+          if (status === google.maps.StreetViewStatus.ZERO_RESULTS) {
+            svShowMessage("No Street View imagery available near this location.", false);
+            return;
+          }
+          // UNKNOWN_ERROR — a server-side problem, not a coverage gap.
+          svShowMessage(
+            "Street View could not be loaded (Google returned " + status + ").",
+            false
+          );
+        }
+      );
+    }
+
+    // Face the camera at the spot the user actually clicked, rather than at
+    // whatever bearing the last panorama happened to be left on.
+    function svHeadingTowards(fromLatLng, toLat, toLng) {
+      const lat1 = (fromLatLng.lat() * Math.PI) / 180;
+      const lat2 = (toLat * Math.PI) / 180;
+      const dLng = ((toLng - fromLatLng.lng()) * Math.PI) / 180;
+      const y = Math.sin(dLng) * Math.cos(lat2);
+      const x =
+        Math.cos(lat1) * Math.sin(lat2) -
+        Math.sin(lat1) * Math.cos(lat2) * Math.cos(dLng);
+      const brng = (Math.atan2(y, x) * 180) / Math.PI;
+      return (brng + 360) % 360;
+    }
+
+    // The panel slides in over 0.3s. Anything that measures it — the panorama
+    // sizing itself, and the recentre working out how much map the panel is
+    // covering — has to wait for the slide to finish or it measures a panel
+    // that is still off-screen and puts the dot underneath it.
+    svPanel.addEventListener("transitionend", e => {
+      if (e.propertyName !== "transform" || e.target !== svPanel) return;
+      svPanelSlideDone();
+      if (svPano && svPanel.classList.contains("open")) {
+        google.maps.event.trigger(svPano, "resize");
+      }
+      svPositionPulse();
+      svRecenter();
+    });
+
+    function openPanel() {
+      const wasOpen = svPanel.classList.contains("open");
+      svPanel.classList.add("open");
+      svTab.textContent = "▶";
+      // Only a real state change slides; re-opening an open panel must not
+      // arm a transition that will never end.
+      if (!wasOpen) svPanelSlideStart();
+      if (svPano) {
+        requestAnimationFrame(() => google.maps.event.trigger(svPano, "resize"));
+      }
+    }
+
+    function closePanel() {
+      if (svPanel.classList.contains("open")) svPanelSlideStart();
+      svPanel.classList.remove("open");
+      svTab.textContent = "◀";
+      // The dot belongs to the open panel; it goes when the panel goes.
+      svClearMapLink();
+    }
+
+    function openStreetView(lat, lng) {
+      svLat = lat;
+      svLng = lng;
+      svLocation.textContent = `${lat.toFixed(6)}, ${lng.toFixed(6)}`;
+      if (svKey) {
+        svGoTo(lat, lng);
+      } else {
+        svShowMessage(
+          "Street View needs a Google Maps API key. The map's aerial basemap " +
+          "is available underneath without one.",
+          false
+        );
+        // The one ask: first Street View request of the session with no key.
+        if (!svKeyAsked && !svKeyDeclined) svShowKeyForm();
+      }
+      openPanel();
+    }
+
+    // Re-render whatever is on screen under the key we now have.
+    function svRerender() {
+      svRefreshKeyUi();
+      if (!svKey) {
+        svClearMapLink();
+        if (svLat === null) svShowPlaceholder();
+        else svShowMessage("Street View needs a Google Maps API key.", false);
+        return;
+      }
+      // The Maps JS API bootstraps once per page load and keeps the key it
+      // was given; a different key cannot be swapped in underneath it.
+      if (svApiLoadedKey && svApiLoadedKey !== svKey) {
+        svShowMessage(
+          "Key saved. Reload the page to use it — the Google Maps API can only " +
+          "be loaded once per page.",
+          false
+        );
+        svKeyStatus.textContent = "New key saved — reload the page to use it.";
+        return;
+      }
+      svAuthFailed = false;
+      if (svLat === null) svShowPlaceholder();
+      else svGoTo(svLat, svLng);
+    }
+
+    svKeyForm.addEventListener("submit", e => {
+      e.preventDefault();
+      const k = svKeyInput.value.trim();
+      if (!k) return;
+      try {
+        localStorage.setItem(SV_STORAGE_KEY, k);
+      } catch (_) {
+        // Private mode — the key just won't outlive the page.
+      }
+      svKey = k;
+      svKeySource = "stored";
+      svKeyDeclined = false;
+      svHideKeyForm();
+      svRerender();
+    });
+
+    svKeySkip.addEventListener("click", () => {
+      svKeyDeclined = true;
+      svHideKeyForm();
+      svRerender();
+    });
+
+    svNoImgKeyBtn.addEventListener("click", () => svShowKeyForm());
+
+    svKeySetBtn.addEventListener("click", () => {
+      if (svKeyForm.classList.contains("hidden")) svShowKeyForm();
+      else svHideKeyForm();
+    });
+
+    svKeyClearBtn.addEventListener("click", () => {
+      try {
+        localStorage.removeItem(SV_STORAGE_KEY);
+      } catch (_) {}
+      svResolveKey();
+      svHideKeyForm();
+      svRerender();
+      if (!svKey) svKeyStatus.textContent = "Key cleared — Street View is unavailable.";
+    });
+
+    svClose.addEventListener("click", closePanel);
+
+    svTab.addEventListener("click", () => {
+      if (svPanel.classList.contains("open")) {
+        closePanel();
+      } else {
+        if (svLat === null) svShowPlaceholder();
+        openPanel();
+      }
+    });
+
+    svRefreshKeyUi();
+    svShowPlaceholder();
+
+    // ── One map click, one owner ──────────────────────────────────────────
+    //
+    // MERGE NOTE (integrate). Both branches registered their own
+    // `view.on("click")` and each opened its own right-hand panel, so a single
+    // click on the merged app opened two panels stacked on each other. There
+    // is now exactly ONE map-click handler in the app — the parcel report's,
+    // in js/parcel-report.js — and Street View asks that handler for a click
+    // rather than registering a second one.
+    //
+    //   A map click selects the parcel and opens the report. Everywhere.
+    //
+    // Street View is a tool reached two ways:
+    //   1. "Street View here" in the report header — look at the parcel you
+    //      already have open. This is the common case.
+    //   2. the toolbar's "Street View" toggle — pick mode, "click the map to
+    //      look", for dropping a look anywhere, road or not. While pick mode
+    //      is on the interceptor claims the click and no parcel is selected;
+    //      it switches itself off on Escape and when the panel is closed.
+
+    let svPickMode = false;
+
+    const svToggle = document.createElement("button");
+    svToggle.id = "street-view-toggle";
+    svToggle.className = "panel-toggle";
+    svToggle.textContent = "Street View";
+    svToggle.title = "Click the map to look around from there";
+    toggleBar.appendChild(svToggle);
+
+    function svSetPickMode(on) {
+      svPickMode = !!on;
+      svToggle.classList.toggle("active", svPickMode);
+      document.documentElement.classList.toggle("sv-pick-mode", svPickMode);
+      if (svPickMode) {
+        openPanel();
+        if (svLat === null) svShowPlaceholder();
+        svPlaceholder.textContent =
+          "Street View: click anywhere on the map to look from there.";
+      } else if (svLat === null) {
+        svShowPlaceholder();
+      }
+    }
+
+    svToggle.addEventListener("click", () => svSetPickMode(!svPickMode));
+
+    // Closing the panel leaves pick mode — otherwise the next map click would
+    // silently reopen it instead of selecting a parcel.
+    svClose.addEventListener("click", () => svSetPickMode(false));
+    document.addEventListener("keydown", e => {
+      if (e.key === "Escape" && svPickMode) svSetPickMode(false);
+    });
+
+    const prApi = window.NRPCParcelReport && window.NRPCParcelReport.api;
+
+    if (prApi && typeof prApi.setClickInterceptor === "function") {
+      prApi.setClickInterceptor((lat, lng) => {
+        if (!svPickMode) return false;
+        openStreetView(lat, lng);
+        return true; // claimed — no parcel selection for this click
+      });
+
+      // "Street View here" — the parcel that is already open. Sits in the
+      // report header, which is the same DOM node the mobile sheet uses, so
+      // one button serves both.
+      const svHereBtn = document.createElement("button");
+      svHereBtn.id = "pr-street-view";
+      svHereBtn.type = "button";
+      svHereBtn.className = "pr-header-btn";
+      svHereBtn.textContent = "Street View";
+      svHereBtn.title = "Look at this parcel from the street";
+      svHereBtn.hidden = !prApi.hasFacts();
+      svHereBtn.addEventListener("click", () => {
+        const p = prApi.lastPoint();
+        if (!p) return;
+        svSetPickMode(false);
+        openStreetView(p.lat, p.lon);
+      });
+      prApi.header.insertBefore(svHereBtn, prApi.header.lastChild);
+      prApi.onSelect(() => {
+        svHereBtn.hidden = !prApi.hasFacts();
+      });
+    } else {
+      // No parcel report on the page (a stripped build, or a test harness):
+      // Street View owns the click, as it did on its own branch — but still
+      // only when the user has switched pick mode on.
+      view.on("click", async (event) => {
+        if (!svPickMode) return;
+        const response = await view.hitTest(event);
+        const pointResult = response.results.find(
+          r => r.type === "graphic" && r.graphic.geometry && r.graphic.geometry.type === "point"
+        );
+        // Prefer a clicked point feature; fall back to the raw map point so the
+        // panel is reachable even when no point layer is switched on.
+        const pt = pointResult ? pointResult.graphic.geometry : event.mapPoint;
+        if (pt && typeof pt.latitude === "number" && typeof pt.longitude === "number") {
+          openStreetView(pt.latitude, pt.longitude);
+        }
+      });
+    }
+
+    // ── The toolbar has to outrank the panels ─────────────────────────────
+    //
+    // MERGE NOTE (integrate). `view.ui.add()` parents the toolbar inside
+    // `.esri-ui`, and `.esri-ui` carries `z-index: 0` — its own stacking
+    // context. Every z-index inside it is therefore relative to 0, and no
+    // number can lift the toolbar above the two `position: fixed` panels at
+    // z-index 150 on <body>. On the branches separately this never showed:
+    // the report panel is 400px on the right edge, clear of a 580px toolbar,
+    // and Street View's panel started at 50vw. Merged, the toolbar gained a
+    // button (656px wide) and the panorama is offset left to make room for the
+    // report — and the two overlap. Hit-tested with elementFromPoint at
+    // 1356×693: "Zoom to..." and "Street View" both returned
+    // #street-view-header, i.e. genuinely unclickable.
+    //
+    // The fix is the right parent, not a bigger number — the same lesson
+    // js/mobile.js already wrote down for the drawer. On <body> the toolbar's
+    // z-index means what it says. Positioning is restored in CSS at the exact
+    // rect view.ui gave it (15, 15), so the dropdowns that main.js positions
+    // from button rects are unaffected. mobile.js reparents it too; whichever
+    // runs first, the other is a no-op.
+    document.body.appendChild(toggleBar);
+    document.documentElement.classList.add("nrpc-toolbar-body");
+
+    // The surface the rest of the app drives Street View through — the mobile
+    // layer needs it to make the panorama one of its managed surfaces.
+    window.NRPCStreetView = {
+      panel: svPanel,
+      tab: svTab,
+      toggle: svToggle,
+      open: openStreetView,
+      openPanel,
+      closePanel,
+      isOpen: () => svPanel.classList.contains("open"),
+      setPickMode: svSetPickMode,
+      isPickMode: () => svPickMode,
+    };
+    if (window.NRPCMobile && typeof window.NRPCMobile.registerStreetView === "function") {
+      try {
+        window.NRPCMobile.registerStreetView(window.NRPCStreetView);
+      } catch (e) {
+        console.warn("[street-view] mobile registration failed:", e);
+      }
+    }
+
   });
 });

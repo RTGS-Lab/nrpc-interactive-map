@@ -266,6 +266,19 @@
       { name: "clipzip", wrap: "clip-zip-dropdown", toggle: "clip-zip-btn" },
     ];
 
+    // The Street View panorama is a surface too, but it is built by main.js
+    // *after* this init runs, and it represents "open" with an `open` class
+    // rather than the toolbar's `hidden`/`active` pair — so it cannot live in
+    // SURFACES. main.js hands it over through NRPCMobile.registerStreetView()
+    // and attachStreetView() below folds it into the same one-at-a-time rule.
+    let svSurface = null;
+    const svIsOpen = () => !!svSurface && svSurface.isOpen();
+    function svClose() {
+      if (!svIsOpen()) return;
+      svSurface.setPickMode(false);
+      svSurface.closePanel();
+    }
+
     /**
      * Add or remove a class ONLY if that actually changes the element.
      *
@@ -321,6 +334,7 @@
      * Escape and the back gesture dismiss, one layer at a time.
      */
     function topmost() {
+      if (svIsOpen()) return "streetview";
       if (api.isOpen()) return "sheet";
       const n = openSurfaceName();
       if (n) return n;
@@ -331,7 +345,8 @@
     function closeTopmost() {
       const t = topmost();
       if (!t) return false;
-      if (t === "sheet") api.closePanel();
+      if (t === "streetview") svClose();
+      else if (t === "sheet") api.closePanel();
       else if (t === "drawer") setMenu(false);
       else closeSurfaces();
       return true;
@@ -364,6 +379,8 @@
         // The report sheet is a surface too, and it loses to a tool the user
         // just asked for. It stays recoverable from the "Parcel report" chip.
         if (api.isOpen()) api.closePanel();
+        // …and so does the panorama.
+        svClose();
         // Only on the opening edge, or the back stack would gain an entry
         // every time anything rewrote this element's class attribute.
         if (justOpened) pushSurface(s.name);
@@ -613,6 +630,7 @@
       if (open && !sheetWasOpen) {
         setMenu(false);
         closeSurfaces();
+        svClose();
         pushSurface("sheet");
       }
       sheetWasOpen = open;
@@ -814,8 +832,38 @@
     // sure the sheet does not swallow the map underneath it.
     api.setHint("Tap “Use my location”, or tap the map to pick a parcel.");
 
+    // ── Street View as a managed surface ────────────────────────────────────
+    //
+    // On a 390px screen the panorama is one more thing that can cover the map,
+    // so it obeys the same rule as everything else: exactly one surface open at
+    // a time. It comes up from the bottom (`mb-sv`) instead of sliding over the
+    // right half of the screen, and the date badge and the dates row ride with
+    // it unchanged. The desktop's edge tab is a second way in that a phone has
+    // no room for — the drawer's "Street View" entry is the way in here.
+    function attachStreetView(sv) {
+      if (!sv || !sv.panel || svSurface) return null;
+      svSurface = sv;
+      sv.panel.classList.add("mb-sv");
+      if (sv.tab) sv.tab.classList.add("mb-hidden");
+      let wasOpen = false;
+      new MutationObserver(() => {
+        const open = sv.isOpen();
+        if (open && !wasOpen) {
+          closeSurfaces();
+          setMenu(false);
+          if (api.isOpen()) api.closePanel();
+          pushSurface("streetview");
+        }
+        wasOpen = open;
+        requestAnimationFrame(syncViewPadding);
+      }).observe(sv.panel, { attributes: true, attributeFilter: ["class"] });
+      return sv;
+    }
+    svRegister = attachStreetView;
+
     const controller = {
       isMobile: true,
+      streetView: () => svSurface,
       // The surface manager, for tests and for the console.
       surfaces: {
         get open() {
@@ -845,5 +893,16 @@
     return controller;
   }
 
-  window.NRPCMobile = { init, isMobile, circleRing, haversineM, geoErrorText };
+  // Set by init() on a phone; null on a desktop, where main.js's call is a
+  // no-op and the Street View panel keeps its own desktop behaviour.
+  let svRegister = null;
+
+  window.NRPCMobile = {
+    init,
+    isMobile,
+    circleRing,
+    haversineM,
+    geoErrorText,
+    registerStreetView: sv => (svRegister ? svRegister(sv) : null),
+  };
 })();
