@@ -163,6 +163,16 @@ window.NRPCReportMaps = (function () {
   // width is measured per capture and printed in the plate's own furniture.
   const ECO_FRAME_M = 500;
 
+  // The largest capture either dimension is allowed to be.
+  //
+  // It was 2400, and Plate 1's map window is 2330 x 2596: the height was capped,
+  // composeFurniture's cover-fit scaled the capture up by 1.0817 to fill the
+  // window, and 8% of the captured width was cropped away — a slightly softer
+  // sheet framed slightly tighter than the capture that was measured. 2600
+  // covers every window the three plates produce, so the blit is 1:1 and the
+  // frame the scale bar describes is the frame on the paper.
+  const MAX_CAPTURE_PX = 2600;
+
   // Plate 3: a legend row's description is a survey free-text field and can run
   // for paragraphs. Past this it is cut at a word boundary with an ellipsis —
   // the full text is in the report's card, three pages earlier.
@@ -1639,8 +1649,8 @@ window.NRPCReportMaps = (function () {
     async function plate(name, kind, size, spec, capOpts) {
       const win = plateWindow(size, spec);
       const shot = await capture(facts, kind, {
-        width: Math.min(win.w, 2400),
-        height: Math.min(win.h, 2400),
+        width: Math.min(win.w, MAX_CAPTURE_PX),
+        height: Math.min(win.h, MAX_CAPTURE_PX),
         timeoutMs: 20000,
         ...(capOpts || {}),
       });
