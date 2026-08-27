@@ -1341,13 +1341,20 @@ window.NRPCReportMaps = (function () {
    * without it.
    */
   function drawCards(ctx, cards, x, y, w, S, availH, measureOnly) {
-    // Five cards of seven lines each do not fit a landscape sheet's column at
-    // the full body size — measured: 1,627 px wanted against 1,474 px of
-    // column on PID 2411921110001. So the block is measured first and the type
+    // The column can overflow, and when it does it loses a whole contribution
+    // off the bottom of the sheet. So the block is measured first and the type
     // stepped down until it fits, no further than 0.72 of full size, at which
-    // point it is still 17 px on a 300 dpi sheet. A legend that runs off the
-    // bottom of the sheet loses a whole contribution; a legend a point smaller
-    // loses nothing.
+    // point it is still 17 px on a 300 dpi sheet. A legend a point smaller
+    // loses nothing; a legend that runs off the page loses a site.
+    //
+    // Measured 2026-08-27: five cards of seven lines each, with a
+    // 130-character description, want 1,395 px of the landscape column's
+    // 1,640 px and fit at FULL size — checked by rendering five synthetic
+    // cards and reading the pixels below the column for ink. So the step-down
+    // has not yet been needed on anything real. It is here for the row this
+    // data will eventually carry: `description` is unbounded survey free text,
+    // clipped at CARD_DESC_MAX, and CARD_DESC_MAX is a constant someone will
+    // raise.
     if (!measureOnly && availH) {
       let fit = 1;
       for (const f of [1, 0.92, 0.85, 0.78, 0.72]) {
