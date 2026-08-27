@@ -372,6 +372,19 @@
       out.push(para(inlineRuns(node, { i: true, sz: 18 })));
       return;
     }
+    // The contact / score / date-added / distance lines a card now carries.
+    // Kept at normal weight rather than dropped into the grey Small style with
+    // the survey detail: these are the fields Bryan added the section for —
+    // who to call, what they scored it, when it went in.
+    //
+    // Checked before the container recursion below because the contact line
+    // holds two spans (and, in the panel, an <a>). Without a rule it would
+    // still reach inlineRuns and keep its text, but at the default size with
+    // no formatting of its own.
+    if (/pr-opp-print-field/.test(cls)) {
+      out.push(para(inlineRuns(node, { sz: 18 })));
+      return;
+    }
 
     // A container: recurse. A leaf with text: one paragraph.
     const hasElementChildren = [...node.childNodes].some(

@@ -935,3 +935,91 @@ NRPCToolbar.runSearch(text) / .rows / .choose(i) / .zoomEntries()
 NRPCToolbar.setGroup(row) / .closeFloating() / .applyDeepLink()
 NRPCStreetView.setPickMode(on) / .open(lat, lng)
 ```
+
+---
+
+## Shared opportunities: the nearest five, and what the record actually holds (branch `shared-opps`)
+
+Bryan, 27 Aug: *"it should show the top 5 nearest, sorted by distance … Be sure
+to provide the org, contact name, and email of the partner opportunity (and
+their assigned score, and date it was added - this data is all for internal
+coalition members, so they know it's going to be shared this way)."*
+
+### The field audit — do this before believing the section
+
+Read off the live `?f=json` of all five NRPC Data layers AND all 232 records on
+2026-08-27. Three of the five asked-for fields are clean, one has a caveat, one
+does not exist:
+
+| Asked for | Field | Reality |
+|---|---|---|
+| organisation | `organization` | present — 156/162, 17/21, 46/49 non-null |
+| contact name | `name` | present — 144/162, 17/21, 48/49 non-null |
+| **contact email** | **none** | **no such field on any of the five layers, and a regex sweep for an address over every string value of all 232 rows returns zero** |
+| assigned score | `easy_start` / `rate_priority` | present, but a different question per schema — see below |
+| date added | `CreationDate` | present, but usually the bulk-load stamp — see below |
+
+Three things to keep in mind before touching this code:
+
+- **Do not add a speculative field to `OPP_COMMON_FIELDS`.** These services
+  reject the *entire* query with `'outFields' parameter is invalid` when
+  outFields names a field the layer does not publish. One optimistic `email`
+  would take the whole section down on every parcel. Verified 2026-08-27.
+- **The two rating scales run in opposite directions.** `easy_start` is
+  documented "1: very easy, 5: very hard"; `rate_priority` and
+  `rate_feasibility` are "1: low, 5: high". A bare 4 from Activity 1 means
+  nearly the opposite of a bare 4 from Activity 2, so the card prints the scale
+  with the number, every time. The card's headline score is `easy_start` on the
+  opportunity schema and `rate_priority` on the connection schema
+  (`OPP_SCORE_FIELD`); the other ratings stay in the detail line, and the
+  promoted one is filtered out of it so the number is not printed twice.
+- **`CreationDate` is mostly a bulk-load timestamp, not a contribution date.**
+  One value per workshop layer is shared by the majority of that layer's rows —
+  129/162, 20/21, 49/49 — because that is when the workshop CSV was loaded into
+  ArcGIS Online. Every other `CreationDate` in the data is unique to one row and
+  is genuine (33 of them on Activity 1, 30 Apr to 11 Sep 2025). Those three
+  stamps are in `OPP_BULK_LOAD_MS`; rows matching one print "· layer load date"
+  and the section explains it once. A value not in the table is treated as
+  genuine, which is how a Contribute-panel contribution will be treated with no
+  code change.
+
+Also corrected from the previous round's notes: `CreationDate` comes back from
+these layers as **epoch milliseconds**, not an ISO string. `contributedOn()`
+still takes either.
+
+### The section is now five cards
+
+`opps.nearest` — a distance-ascending view over `opps.items`, capped at
+`OPP_NEAREST_N`. `items` and every count built from it are unchanged, which is
+what keeps the model payload byte-for-byte what it was.
+
+**Widen once.** Most parcels in the county have fewer than five contributions in
+the tiered scope, so when `nearest` is short the search re-runs at
+`OPP_WIDEN_M` (1,000 m) — once, never twice — and the extra rows carry the
+`WIDER` relation, are merged into `nearest` **by distance** (not appended: on
+PID 1802924440108 the widened row at 417 m is nearer than both in-scope rows at
+567 m and 1,140 m), and go nowhere else. Measured cost, four parcels,
+2026-08-27: **98–224 ms**, and only on parcels that are short.
+
+### Contacts: on paper, never in the prompt
+
+Bryan, 27 Aug: *"do not put the names and emails into the prompt sent to Claude.
+ONLY IN THE REPORT and PARCEL SUMMARY."* Two independent guards —
+`compactOpportunities()`'s whitelist, and `stripOpportunityContributors()`
+destructuring both `contributor` and `contactEmail` away. Verified by
+intercepting the real request body with every row carrying a stub email: no
+name, no address, no `@` anywhere in the payload.
+
+### Two bugs this round fixed in `js/report-maps.js`
+
+- **Labels only appeared on point features.** `geomFromEsriJson()` returns plain
+  autocast JSON, so `.centroid` and `.extent` are `undefined` on polygons and
+  polylines. Anything reading them silently produced nothing. `labelPoint()`
+  now works off the raw rings/paths and picks the vertex nearest the parcel —
+  which also keeps a kilometres-long corridor's label inside the frame.
+- **Captures raced the graphics fade.** `whenStable()` waited two
+  `requestAnimationFrame`s after `updating` went false, which is enough at
+  60 Hz and not otherwise. A headless export came out with the parcel outline,
+  the contributions and the numbers all painted at a few per cent opacity —
+  every graphic present, mid-fade, captured. There is now a `SETTLE_MS` (400 ms)
+  real-time wait first. Costs an export ~1.6 s over four captures.

@@ -671,9 +671,12 @@ body,
   border-top: 1px dotted #e2e2e2;
 }
 
-.pr-opp-top {
+/* The card's first line. Was .pr-opp-top, which held the org and the distance
+   side by side; the distance moved to the foot of the card when the fields
+   were put in the order Bryan asked for them, so this now holds the rank and
+   the organisation and nothing else. */
+.pr-opp-head {
   display: flex;
-  justify-content: space-between;
   align-items: baseline;
   gap: 6px;
 }
@@ -731,6 +734,57 @@ body,
   font-size: 10px;
   color: #aaa;
   margin-top: 2px;
+}
+
+/* ── The card's five requested fields ───────────────────────────────────────
+   Contact name, email, assigned score and date added, plus the distance line
+   at the foot. Bryan asked for these by name: they are why the section exists,
+   so they are 11px and near-black rather than joining the 10px grey survey
+   detail under the description. */
+.pr-opp-field {
+  font-size: 11px;
+  color: #444;
+  line-height: 1.45;
+  margin-top: 2px;
+  word-break: break-word;
+}
+
+.pr-opp-contact a {
+  color: #0079c1;
+}
+
+.pr-opp-score {
+  color: #333;
+}
+
+/* A field the data does not carry is stated, not left blank — a blank line
+   and an unasked question look identical. Italic and grey so a card of them
+   still reads as a card and not as an error. */
+.pr-opp-missing {
+  color: #a0a0a0;
+  font-style: italic;
+}
+
+/* The distance, last, on its own line. */
+.pr-opp-whereline {
+  margin-top: 3px;
+}
+
+.pr-opp-whereline .pr-opp-where {
+  white-space: normal;
+}
+
+/* Only ever seen when the widen-once pass fired. Kept quiet: these rows are
+   further out than the rest of the report's scope, and the note under the
+   list is where that gets explained. */
+.pr-opp-where.pr-opp-wide {
+  color: #8a8a95;
+  font-style: italic;
+}
+
+.pr-opp:has(.pr-opp-wide) {
+  border-left-color: #dcdce4;
+  border-left-style: dashed;
 }
 
 #pr-actions {
@@ -1582,6 +1636,19 @@ html.nrpc-mobile .pr-opp {
 
 html.nrpc-mobile .pr-opp-desc {
   font-size: 13px;
+}
+
+/* The mobile sheet renders the same panel DOM, so the card's contact, score,
+   date and distance lines arrive here for free — they just need the sheet's
+   larger type. The mailto also gets a finger-sized target: on a phone this is
+   the one line of the report someone actually taps. */
+html.nrpc-mobile .pr-opp-field {
+  font-size: 12.5px;
+}
+
+html.nrpc-mobile .pr-opp-contact a {
+  display: inline-block;
+  padding: 3px 0;
 }
 
 /* ── The locate bar ────────────────────────────────────────────────────────
@@ -2788,4 +2855,49 @@ html.nrpc-mobile #pr-toast {
   height: 5px;
   border-radius: 50%;
   background: #0079c1;
+}
+
+/* ── Shared opportunities: the card's requested fields, on paper ────────────
+   Deliberately a block of its own at the end of the file rather than lines
+   added inside the existing @media print section above: another branch is
+   reworking that section right now, and two edits in one hunk is a merge
+   conflict for no benefit. Nothing here overrides anything there — these are
+   classes that did not exist until this commit. */
+@media print {
+  #pr-print .pr-opp-print-field {
+    font-size: 9.5pt;
+    color: #222;
+    line-height: 1.35;
+    margin: 1pt 0 0;
+  }
+
+  /* Contact name and email are printed because this report goes to internal
+     NRPC coalition members and the point of the section is who to call. The
+     footer says so out loud. */
+  #pr-print .pr-opp-print-contact {
+    font-weight: 600;
+  }
+
+  /* A field the data does not have says so rather than leaving a gap. */
+  #pr-print .pr-opp-print-missing {
+    color: #8a8a8a;
+    font-style: italic;
+    font-weight: 400;
+  }
+
+  #pr-print .pr-opp-print-whereline {
+    margin-top: 2pt;
+  }
+
+  #pr-print .pr-opp-print-whereline .pr-opp-print-where {
+    font-size: 9pt;
+  }
+
+  /* The h3 the section gained: "Nearest 5". */
+  #pr-print .pr-print-section h3 {
+    font-size: 11pt;
+    margin: 10pt 0 2pt;
+    page-break-after: avoid;
+    break-after: avoid;
+  }
 }
