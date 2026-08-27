@@ -2204,6 +2204,9 @@ require([
     });
 
     function openPanel() {
+      // One companion panel over the map at a time — opening the panorama
+      // closes the report. js/panel-exclusivity.js carries the rule.
+      if (window.NRPCPanels) window.NRPCPanels.claim("streetview");
       const wasOpen = svPanel.classList.contains("open");
       svPanel.classList.add("open");
       svTab.textContent = "▶";
@@ -2368,8 +2371,36 @@ require([
     // Closing the panel leaves pick mode — otherwise the next map click would
     // silently reopen it instead of selecting a parcel.
     svClose.addEventListener("click", () => svSetPickMode(false));
+
+    // The panorama's half of the one-panel-at-a-time rule. Closing it from the
+    // arbiter must also leave pick mode, for the reason just above: a closed
+    // panel with pick mode still on would swallow the next map click.
+    if (window.NRPCPanels) {
+      window.NRPCPanels.register("streetview", {
+        isOpen: () => svPanel.classList.contains("open"),
+        close: () => {
+          svSetPickMode(false);
+          closePanel();
+        },
+      });
+    }
+
+    // Escape returns the user to the map: it leaves pick mode and closes
+    // whichever panel is open. One press, one clear outcome. On a phone
+    // mobile.js owns Escape (it has a whole surface ladder to unwind), and the
+    // search box owns its own Escape, so neither is touched here.
     document.addEventListener("keydown", e => {
-      if (e.key === "Escape" && svPickMode) svSetPickMode(false);
+      if (e.key !== "Escape") return;
+      if (document.documentElement.classList.contains("nrpc-mobile")) return;
+      const t = e.target;
+      if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT")) return;
+      let acted = false;
+      if (svPickMode) {
+        svSetPickMode(false);
+        acted = true;
+      }
+      if (window.NRPCPanels && window.NRPCPanels.closeTopmost()) acted = true;
+      if (acted) e.preventDefault();
     });
 
     const prApi = window.NRPCParcelReport && window.NRPCParcelReport.api;

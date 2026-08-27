@@ -2274,21 +2274,34 @@ html.nrpc-mobile #clip-zip-dropdown {
   display: none;
 }
 
-/* ── Merge (integrate): the two right-hand panels, and the one map click ────
+/* ── The two right-hand panels ──────────────────────────────────────────────
    The `parcel-report` and `street-view` branches each dock a panel to the
-   right edge at z-index 150. Merged, they landed on top of each other. The
-   report is the primary surface, so it keeps the edge; when it is open the
-   panorama sits beside it instead of over it, and slides out past it when
-   closed. DOM order makes the sibling selector work: parcel-report.js appends
-   its panel during init, main.js appends the Street View panel after. */
+   right edge at z-index 150, and the merge first tried to seat them side by
+   side (`#parcel-report-panel.open ~ #street-view-panel { right: 400px }`).
+   Measured at a 1056px viewport that put 887px of panel over the map and left
+   `elementFromPoint` returning `#street-view-no-img` at ordinary map positions
+   — the map lost its own click surface.
 
-#parcel-report-panel.open ~ #street-view-panel {
-  right: 400px;
-  width: min(46vw, 560px);
-}
+   Both panels now share the right edge because only one is ever open:
+   js/panel-exclusivity.js closes the other on the way in. Nothing here has to
+   know about the sibling any more, which is why the sibling rules are gone.
 
-#parcel-report-panel.open ~ #street-view-panel:not(.open) {
-  transform: translateX(calc(100% + 402px));
+   One consequence has to be paid for. Sharing the edge means the open panel
+   covers the *other* panel's re-open tab: both panels are z-index 150, so DOM
+   order decides, and main.js appends the panorama after parcel-report.js
+   appends the report. Measured with the panorama open, `elementFromPoint` at
+   #pr-tab's own centre (1047, 235) returned `#street-view-no-img` — the tab
+   was drawn but unclickable, and it is the only way back to the report.
+
+   #pr-tab is a child of #parcel-report-panel, which is itself a stacking
+   context at 150, so no z-index on the tab can lift it past a sibling panel.
+   The panel is what has to move. The closed panel is the one whose tab is
+   showing — its body is translated off-screen — so raising the CLOSED panel
+   above the open one puts exactly the tab on top and nothing else. */
+
+#parcel-report-panel:not(.open),
+#street-view-panel:not(.open) {
+  z-index: 160;
 }
 
 /* Both panels put a re-open tab on the right edge at top: 25%, so merged they

@@ -2251,12 +2251,22 @@
     });
 
     function openPanel() {
+      // One companion panel over the map at a time — opening the report closes
+      // Street View. js/panel-exclusivity.js carries the rule and the reason
+      // (two open panels took the map's own click surface away).
+      if (window.NRPCPanels) window.NRPCPanels.claim("report");
       panel.classList.add("open");
       tab.textContent = "▶";
     }
     function closePanel() {
       panel.classList.remove("open");
       tab.textContent = "◀";
+    }
+    if (window.NRPCPanels) {
+      window.NRPCPanels.register("report", {
+        isOpen: () => panel.classList.contains("open"),
+        close: closePanel,
+      });
     }
     function setStatus(text, kind) {
       status.textContent = text || "";
@@ -2674,6 +2684,12 @@
       // in a test. Returns "intercepted" or "parcel".
       mapClick: (lat, lon) => handleMapClick(lat, lon, null),
       hasClickInterceptor: () => !!clickInterceptor,
+      // The one-panel-at-a-time invariant, as an assertion. { ok, open, count }
+      // — ok is false the moment the report and the panorama are both up.
+      assertOnePanel: () =>
+        window.NRPCPanels
+          ? window.NRPCPanels.assertOnePanel()
+          : { ok: false, open: [], count: 0, error: "NRPCPanels not loaded" },
       // Wall-clock per stage for the last parcel loaded, in ms, with the
       // offset from the click at which each stage started — that is what
       // shows adjacency running alongside the context fetches rather than
