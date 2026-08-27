@@ -984,7 +984,28 @@ body,
  * With it, everything but #pr-print is hidden: no map, no panel, no controls.
  */
 
+/* Letter, 0.65in all round. `size` is named rather than left to the printer so
+   the usable box below is a fact and not a guess.
+
+   FIREFOX WARNING — this rule is advisory there, not binding. Firefox honours
+   `@page { margin }` ONLY while the print dialog's "Margins" dropdown says
+   "Default":
+
+       // toolkit/content/global/print.js
+       target.honorPageRuleMargins = value == "default";
+
+   On "None" it throws these margins away and prints at the dialog's own
+   margins, which for "None" are zero — the report then runs off all four paper
+   edges. There is no CSS that can win that argument and no pref to force it, so
+   everything below is written to survive losing it: the document is capped to
+   the usable WIDTH and centred, and every image is capped in inches, so the
+   side margins and the figure sizes hold at any Margins setting. Only the top
+   and bottom margins still depend on the dropdown.
+
+   Reproduce a "Margins: None" print with:
+     outputs/make-firefox-pdf.sh out.pdf none <pid>   (DROP_PAGE_MARGIN=1) */
 @page {
+  size: letter;
   margin: 0.65in;
 }
 
@@ -1005,7 +1026,14 @@ body,
     display: block !important;
     position: static !important;
     width: auto;
-    margin: 0;
+    /* The side margins, made independent of the print dialog. 7.2in is the
+       usable width of Letter at the 0.65in @page margin; `auto` centres it.
+       When Firefox honours @page (and always in Chrome) the containing block
+       is ALREADY 7.2in, so this is a no-op. When Firefox does not, the
+       containing block is the full 8.5in sheet and this puts the 0.65in back
+       on both sides instead of letting the text run to the paper edge. */
+    max-width: 7.2in;
+    margin: 0 auto;
     color: #000;
     /* Named rather than inherited: the printed page should not depend on the
        ArcGIS stylesheet having loaded. Same stack Esri's own theme uses. */
@@ -1218,10 +1246,25 @@ body,
     page-break-inside: avoid;
   }
 
+  /* Sized in BOTH directions, and by `max-`, never by `width: 100%`.
+     `width: 100%` means "whatever the page turns out to be", which is how a
+     1600x1000 capture became a full 8.5in-wide bleed on a Firefox that had
+     dropped the @page margin. With width and height both `auto` the browser
+     scales the image to fit inside the two maxima and keeps its aspect ratio
+     itself (CSS 2.1 §10.4), so no combination of paper and dialog can stretch
+     it or push it past the usable box.
+
+     3.8in, not the 4.5in a 7.2in-wide capture wants: the figure plus its caption
+     then fits in the space left under "The parcel" table instead of being
+     pushed to a page of its own, which is what left 6in of white at the foot
+     of page 1. Measured — see outputs/firefox-print-findings.md. */
   #pr-print .pr-print-figure-img {
     display: block;
-    width: 100%;
+    width: auto;
     height: auto;
+    max-width: 100%;
+    max-height: 3.8in;
+    margin: 0 auto;
     border: 0.5pt solid #999;
   }
 
@@ -1256,12 +1299,18 @@ body,
     text-align: center;
   }
 
+  /* Same rule as the inline figures, at the size of the usable box: 7.2 x 9.7in
+     is Letter less the 0.65in margin. `object-fit: contain` is gone with the
+     `width: 100%` that made it necessary — it was letterboxing the plate inside
+     a box that was the wrong shape, rather than the box being the right shape.
+     Both maxima are absolute, so the plate stays on its one page whatever the
+     print dialog does with the margins. */
   #pr-print .pr-print-plate-img {
     display: block;
-    width: 100%;
-    max-height: 9.7in;
+    width: auto;
     height: auto;
-    object-fit: contain;
+    max-width: 100%;
+    max-height: 9.7in;
     margin: 0 auto;
   }
 }

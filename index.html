@@ -44,6 +44,10 @@
        the end of init(), and it returns immediately on a desktop. -->
   <script src="js/mobile.js"></script>
   <script src="js/main.js"></script>
+  <!-- Inert unless the URL carries ?dev-print=1. Drives the export path from a
+       URL so the PRINTED page can be regression-tested in a real browser —
+       Firefox's print engine is not Chrome's. See docs/dev-print.md. -->
+  <script src="js/dev-print.js"></script>
 </body>
 
 </html>
