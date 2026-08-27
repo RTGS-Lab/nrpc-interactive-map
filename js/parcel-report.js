@@ -25,6 +25,12 @@
 
   const STORAGE_KEY = "nrpc-parcel-report.apiKey";
   const MODEL_KEY = "nrpc-parcel-report.model";
+  // The owner toggle is remembered per browser, like the model choice, and it
+  // defaults ON. Bryan, 2026-08-27: "The Parcel Report still doesn't state who
+  // the property owner is." A brief that cannot name the owner cannot answer
+  // the first question anyone asks about a parcel, so the opt-out stays but
+  // stops being the default.
+  const OWNER_KEY = "nrpc-parcel-report.includeOwner";
 
   const ANTHROPIC_URL = "https://api.anthropic.com/v1/messages";
   const ANTHROPIC_VERSION = "2023-06-01";
@@ -376,6 +382,14 @@
 
   const clean = v =>
     (typeof v === "string" ? v.trim() : v) === "" ? null : (typeof v === "string" ? v.trim() : v);
+
+  // clean(), plus collapsing the runs of internal spaces Hennepin pads its
+  // fixed-width character columns with: 'BROOKLYN PARK MN   55443    ' is one
+  // address line, not three fields.
+  const squash = v => {
+    const s = clean(v);
+    return typeof s === "string" ? clean(s.replace(/\s+/g, " ")) : s;
+  };
 
   const num = v => (typeof v === "number" && isFinite(v) ? v : null);
 
@@ -1353,9 +1367,14 @@
   // out of the request, and both are belt and braces on purpose.
   function stripOpportunityContributors(opps) {
     if (!opps) return opps;
+    const drop = ({ contributor, contactEmail, ...rest }) => rest;
     return {
       ...opps,
-      items: opps.items.map(({ contributor, contactEmail, ...rest }) => rest),
+      items: opps.items.map(drop),
+      // Belt and braces over compactNearest()'s whitelist, exactly as for
+      // items: the five nearest are the rows most likely to be "tidied" into a
+      // spread later, and a spread is how a contributor's name would escape.
+      nearest: (opps.nearest || []).map(drop),
       contributorNamesWithheld:
         "Names of the individuals who contributed each opportunity were withheld from this request.",
     };
@@ -1435,9 +1454,26 @@
         lot: clean(a.LOT),
         block: clean(a.BLOCK),
       },
+      // MEASURED, 2026-08-27, against the live Parcel Base for PID
+      // 2411921110001 and PID 1111823340002 — TAXPAYER_NM_1/_2/_3 are the
+      // taxpayer's MAILING ADDRESS lines, not the extra names the field name
+      // suggests:
+      //   OWNER_NM      'CITY OF BROOKLYN PARK'     'G G NOVAK & M A NOVAK'
+      //   TAXPAYER_NM   'CITY OF BROOKLYN PARK'     'GARY G NOVAK'
+      //   TAXPAYER_NM_1 '5200 85TH AVE N'           '1400 BLACKFOOT TR'
+      //   TAXPAYER_NM_2 'BROOKLYN PARK MN   55443'  'LONG LAKE MN   55356'
+      //   TAXPAYER_NM_3 ''                          ''
+      // so they are joined into one address line rather than listed as names.
+      // Every value is space-padded in the source and carries runs of internal
+      // spaces, which is why squash() and not clean() alone.
       owner: {
         ownerName: clean(a.OWNER_NM),
         taxpayerName: clean(a.TAXPAYER_NM),
+        taxpayerAddress:
+          [a.TAXPAYER_NM_1, a.TAXPAYER_NM_2, a.TAXPAYER_NM_3]
+            .map(squash)
+            .filter(Boolean)
+            .join(", ") || null,
         mailingCity: clean(a.MAILING_MUNIC_NM),
       },
       land: {
@@ -1539,10 +1575,15 @@
     "The natural-resource and ownership context nearby, and what it implies.",
     "",
     "## Shared opportunities",
-    "What partner organisations have already flagged here — who contributed it, what they",
-    "described, whether it is on this parcel, on a parcel touching it, or merely nearby,",
-    "how far from the parcel, and whether it suggests someone to call. One sentence saying",
-    "there are none if the list is empty.",
+    "Work from sharedOpportunities.nearest — those are the five the report itself prints and",
+    "numbers 1-5, closest first, and your paragraph must cover the same five in the same",
+    "order. For each: who contributed it, what they described, whether it is on this parcel,",
+    "on a parcel touching it, nearby, or found by the widened search, and how far away.",
+    "Say which of them suggests someone to call. If sharedOpportunities.widen is present,",
+    "say in one clause that the search had to be widened to fill the list. `items` is the",
+    "full in-scope set behind the counts — use it only for anything the five do not cover,",
+    "and do not count a contribution twice because it appears in both.",
+    "One sentence saying there are none if `nearest` is empty.",
     "",
     "## What to check next",
     "Two to four concrete next steps for a planner, each tied to something specific in",
@@ -1556,12 +1597,59 @@
   // FROZEN, deliberately, per Bryan 2026-08-27: the contact name and email the
   // cards now print are the ORGANISATION's to share internally, not the
   // model's to see. `contributor` and `contactEmail` are absent from the
-  // whitelist below and stripped again by stripOpportunityContributors(); the
-  // `nearest` view and its widened rows are absent too, so this payload is
-  // byte-for-byte what it was before the five-nearest work. Do not "tidy" this
-  // by spreading the row.
+  // whitelists below and stripped again by stripOpportunityContributors().
+  // That part of the freeze stands. Do not "tidy" it by spreading the row.
+  //
+  // The rest of the freeze did NOT stand, and this is the bug Bryan reported on
+  // 2026-08-27: "the shared opportunities section of the LLM-generated report
+  // doesn't include the nearest opportunities shown". Leaving `nearest` and
+  // `widen` out of the payload meant the brief was written from `items` — the
+  // in-scope tier list — while the panel, the printed report, the DOCX and the
+  // figure's 1-5 numbering were all written from `nearest`. On PID
+  // 2411921110001 that is a measured four rows against five: the widened row at
+  // 418 m that the report prints as "5." was in no version of the prompt, and
+  // no ranking was either. Both views now go, and the note below tells the
+  // model how they overlap so it cannot double-count.
   const OPP_PROMPT_LIMIT = 12;
   const OPP_DESCRIPTION_CHARS = 400;
+
+  // The five the report prints, in the shape the prompt needs: the rank the
+  // page numbers them by, who, how far, how it was scored (with the scale,
+  // because the two schemas' scales run in opposite directions), and what was
+  // described. Same whitelist discipline as items — contributor and
+  // contactEmail are not in it.
+  function compactNearest(rows) {
+    return (rows || []).map(r => {
+      const out = {
+        rank: r.nearestRank || null,
+        type: r.type,
+        organization: r.organization,
+        relation: r.relation,
+        distanceMetres: r.distanceMetres,
+        adjacentParcelPid: r.adjacentParcelPid,
+        score: r.score
+          ? {
+              label: r.score.label,
+              value: r.score.value,
+              outOf: r.score.outOf,
+              scale: r.score.scale,
+            }
+          : null,
+        contributedOn: r.contributedOn,
+        dateIsLayerLoadDate: r.dateAddedIsBulkLoad || null,
+        description:
+          r.description && r.description.length > OPP_DESCRIPTION_CHARS
+            ? r.description.slice(0, OPP_DESCRIPTION_CHARS) + "…"
+            : r.description,
+        feasibleInThreeYears: r.feasibleInThreeYears,
+        potentialFunder: r.potentialFunder,
+      };
+      Object.keys(out).forEach(k => {
+        if (out[k] === null || out[k] === undefined || out[k] === "") delete out[k];
+      });
+      return out;
+    });
+  }
 
   function compactOpportunities(opps) {
     if (!opps) return null;
@@ -1591,11 +1679,31 @@
       });
       return out;
     });
+    const nearest = compactNearest(opps.nearest);
     return {
       bufferMetres: opps.bufferMetres,
       searchDistanceMetres: opps.searchDistanceM,
       adjacency: opps.adjacency,
       note: opps.note,
+      // The five the printed report numbers 1-5, closest first. This is the
+      // list the brief's "Shared opportunities" section is written from.
+      nearest,
+      nearestLimit: opps.nearestLimit,
+      // Present only when the widen-once pass fired.
+      widen: opps.widen
+        ? {
+            radiusMetres: opps.widen.radiusMetres,
+            inScopeBefore: opps.widen.inScopeBefore,
+            added: opps.widen.added,
+            stillShort: opps.widen.stillShort,
+          }
+        : null,
+      howNearestAndItemsRelate:
+        "`nearest` is the five contributions the report itself prints and numbers 1-5, " +
+        "closest first. Every row in it whose relation is not 'wider search' is the SAME " +
+        "contribution as one of the rows in `items`, so do not count it twice; rows marked " +
+        "'wider search' are past this report's normal scope, appear nowhere in `items`, and " +
+        "are counted in none of the counts below.",
       onParcelCount: opps.onParcelCount,
       onAdjacentCount: opps.onAdjacentCount,
       nearbyCount: opps.nearbyCount,
@@ -1748,6 +1856,35 @@
     return out.join("");
   }
 
+  // ── Who owns it ──────────────────────────────────────────────────────────
+
+  /**
+   * The owner rows, built once and rendered by BOTH the panel's fact table and
+   * the printed "The parcel" table — the two used to be written out separately,
+   * which is how the panel came to omit the owner while the facts object had
+   * carried it all along.
+   *
+   * Owner is ALWAYS a row, "Not recorded" and all: a report that silently drops
+   * the line cannot be told apart from a parcel with no owner on record, and
+   * "who owns this?" is the first question asked of any parcel.
+   *
+   * Taxpayer is suppressed when it is the same string as the owner — on PID
+   * 2411921110001 both read "CITY OF BROOKLYN PARK", and a second row saying it
+   * again is noise.
+   *
+   * Owner, taxpayer and the taxpayer's mailing address are public Hennepin
+   * County assessor records, published by the county's own Parcel Base service.
+   */
+  function ownerRows(facts) {
+    const o = facts.owner || {};
+    const rows = [["Owner", o.ownerName || "Not recorded"]];
+    if (o.taxpayerName && o.taxpayerName !== o.ownerName) {
+      rows.push(["Taxpayer", o.taxpayerName]);
+    }
+    if (o.taxpayerAddress) rows.push(["Taxpayer address", o.taxpayerAddress]);
+    return rows;
+  }
+
   // ── Fact table for the panel ─────────────────────────────────────────────
 
   function factRows(facts) {
@@ -1755,6 +1892,7 @@
     const rows = [
       ["PID", f.identity.pid],
       ["Address", [f.identity.address, f.identity.city].filter(Boolean).join(", ") || null],
+      ...ownerRows(f),
       ["Size", f.land.parcelAcres === null ? null : `${f.land.parcelAcres} acres`],
       ["Property type", f.land.propertyType],
       ["Homestead", f.land.homesteadStatus],
@@ -2303,10 +2441,16 @@
     };
 
     /**
-     * One inline argument map. Returns null when the capture was not made, so
-     * every call site can append unconditionally and a failed capture simply
-     * leaves the section as it was — an export missing a figure beats an
-     * export that did not happen.
+     * One inline argument map, or null when the capture was not made — a
+     * failed capture simply leaves the section as it was, because an export
+     * missing a figure beats an export that did not happen.
+     *
+     * Append it with appendFigure() below and never with a bare
+     * `parent.append(figureFor(k))`: Node.append() STRINGIFIES a null argument,
+     * so the two unguarded call sites here were printing the literal word
+     * "null" into the document. Measured on PID 2411921110001 with the captures
+     * off — "Total tax $0 null" under the parcel table, and a second "null"
+     * under the context note.
      *
      * The <img> src is a data: URL. docx-writer.js recognises .pr-print-figure
      * and turns the same bytes into a w:drawing, so one capture serves the PDF
@@ -2334,6 +2478,11 @@
       );
       node.append(img, cap);
       return node;
+    };
+
+    const appendFigure = (parent, kind) => {
+      const fig = figureFor(kind);
+      if (fig) parent.append(fig);
     };
 
     // -- header --
@@ -2382,6 +2531,7 @@
       printTable([
         ["PID", f.identity.pid],
         ["Address", where],
+        ...ownerRows(f),
         ["Legal description", legal],
         [
           "Size",
@@ -2403,7 +2553,7 @@
       ])
     );
 
-    root.append(figureFor("facts"));
+    appendFigure(root, "facts");
 
     // -- the model --
     if (f.model) {
@@ -2460,7 +2610,7 @@
       })
     );
 
-    root.append(figureFor("context"));
+    appendFigure(root, "context");
 
     // -- shared opportunities --
     // Unlike the context table this one is not label/value: each contribution
@@ -2573,8 +2723,7 @@
     }
     // The adjacency map belongs INSIDE the opportunities section, not after
     // it: it is the evidence for the tiers the section just listed.
-    const oppFigure = figureFor("opportunity");
-    if (oppFigure) oppSection.append(oppFigure);
+    appendFigure(oppSection, "opportunity");
     root.append(oppSection);
 
     // -- the brief --
@@ -2730,12 +2879,30 @@
     const generateBtn = el("button", { id: "pr-generate", textContent: "Generate report" });
     const ownerWrap = el("label", { className: "pr-owner-toggle" });
     const ownerCb = el("input", { type: "checkbox", id: "pr-include-owner" });
+    // ON unless this browser has been told otherwise. The panel and the printed
+    // report always state the owner; this only governs whether the MODEL is
+    // told, so it is an opt-out from sending a public record to a third party,
+    // not the switch that decides whether the report answers the question.
+    ownerCb.checked = (() => {
+      try {
+        return localStorage.getItem(OWNER_KEY) !== "0";
+      } catch (_) {
+        return true;
+      }
+    })();
+    ownerCb.addEventListener("change", () => {
+      try {
+        localStorage.setItem(OWNER_KEY, ownerCb.checked ? "1" : "0");
+      } catch (_) {}
+    });
     ownerWrap.append(
       ownerCb,
       el("span", {
-        textContent: "Send owner name to Claude",
+        textContent: "Include owner name in the brief",
         title:
-          "Owner and taxpayer names are public record but are withheld from the API request by default.",
+          "Owner, taxpayer and the taxpayer's mailing address are public Hennepin County " +
+          "assessor records. They are always shown in the panel and the exported report; " +
+          "untick this to keep them out of the request sent to Anthropic.",
       })
     );
     const modelSelect = el("select", { id: "pr-model", title: "Model" });
