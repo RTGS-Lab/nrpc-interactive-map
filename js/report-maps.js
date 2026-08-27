@@ -971,9 +971,7 @@ window.NRPCReportMaps = (function () {
    *   { title, subtitle, kicker      the title block, three lines
    *     layout: "full"|"map-left"    map across the sheet, or map left and a
    *                                  legend column down the right
-   *     legend: {title, entries[]}   swatch rows: {label, fill, stroke, dash,
-   *                                  disc} — `disc` draws a numbered circle
-   *                                  instead of a rectangle
+   *     legend: {title, entries[]}   swatch rows: {label, fill, stroke, dash}
    *     cards: [{n, rgb, lines[]}]   Plate 3's data legend: a numbered block
    *                                  per site, each line {text, style}
    *     table: {title, rows[[k,v]]}  Plate 2's sub-score table
@@ -1309,33 +1307,13 @@ window.NRPCReportMaps = (function () {
     entries.forEach(e => {
       const sw = Math.round(38 * S);
       const sh = Math.round(20 * S);
-      if (e.disc) {
-        // The numbered discs on Plates 1 and 3, drawn the way the map draws
-        // them, so a reader matching "3" on the sheet to "3" in the column is
-        // matching the same object and not two similar ones.
-        const r = Math.round(15 * S);
-        ctx.beginPath();
-        ctx.arc(x + r, yy + r - Math.round(2 * S), r, 0, Math.PI * 2);
-        ctx.fillStyle = "rgba(255,255,255,0.95)";
-        ctx.fill();
-        ctx.strokeStyle = e.stroke;
-        ctx.lineWidth = Math.max(1, Math.round(2.5 * S));
-        ctx.stroke();
-        ctx.fillStyle = "#111";
-        ctx.font = `700 ${Math.round(21 * S)}px sans-serif`;
-        ctx.textAlign = "center";
-        ctx.fillText(String(e.disc), x + r, yy + Math.round(2 * S));
-        ctx.textAlign = "left";
-        ctx.font = `${Math.round(24 * S)}px Georgia, "Times New Roman", serif`;
-      } else {
-        ctx.fillStyle = e.fill;
-        ctx.fillRect(x, yy, sw, sh);
-        ctx.strokeStyle = e.stroke;
-        ctx.lineWidth = Math.max(1, Math.round(2.5 * S));
-        if (e.dash) ctx.setLineDash([Math.round(6 * S), Math.round(5 * S)]);
-        ctx.strokeRect(x, yy, sw, sh);
-        ctx.setLineDash([]);
-      }
+      ctx.fillStyle = e.fill;
+      ctx.fillRect(x, yy, sw, sh);
+      ctx.strokeStyle = e.stroke;
+      ctx.lineWidth = Math.max(1, Math.round(2.5 * S));
+      if (e.dash) ctx.setLineDash([Math.round(6 * S), Math.round(5 * S)]);
+      ctx.strokeRect(x, yy, sw, sh);
+      ctx.setLineDash([]);
       ctx.fillStyle = "#111";
       const lines = wrap(ctx, e.label, maxW - sw - Math.round(20 * S));
       lines.forEach((l, li) => ctx.fillText(l, x + sw + Math.round(14 * S), yy - Math.round(2 * S) + li * Math.round(28 * S)));
@@ -1845,14 +1823,19 @@ window.NRPCReportMaps = (function () {
           }
         }
 
+        // "the five" is what the section is CALLED; it is not always five. On
+        // PID 2902924410044 only three contributions exist within 1,000 m, and
+        // a note reading "2 of the five" under a legend listing three is the
+        // kind of small wrongness that makes a reader distrust the sheet.
+        const n = rows.length;
         const notes = [
-          "The numbers on the map are the numbers in this legend and in the report's Nearest 5 list — " +
-            "one contribution, one number, in all three places.",
+          `The numbers on the map are the numbers in this legend and in the report's Nearest ${n} ` +
+            "list — one contribution, one number, in all three places.",
         ];
         if (insetNote) notes.push(insetNote);
         if (o.widen && o.widen.added) {
           notes.push(
-            `${o.widen.added} of the five came from the search widened once to ` +
+            `${o.widen.added} of the ${n} came from the search widened once to ` +
               `${o.widen.radiusMetres.toLocaleString("en-US")} m, because fewer than ` +
               `${o.nearestLimit} contributions are on this parcel, on a parcel touching it, or ` +
               `within ${o.bufferMetres} m.`
