@@ -357,7 +357,15 @@ window.NRPCReportMaps = (function () {
     return out;
   }
 
-  /** The mean of a ring's vertices. Not a true centroid; a target to aim at. */
+  /**
+   * The mean of a ring's vertices. Not a true centroid; a target to aim at.
+   *
+   * `type: "point"` is load-bearing, not decoration. Plate 2's score-and-rank
+   * label is a Graphic whose geometry is this object, and without the type the
+   * autocast does not produce a Point — the graphic is accepted and silently
+   * never drawn. Caught on the first Plate 2: the parcel had its blue casing
+   * and no label at all.
+   */
   function meanPoint(geom) {
     const vs = verticesOf(geom);
     if (!vs.length) return null;
@@ -367,7 +375,7 @@ window.NRPCReportMaps = (function () {
       sx += v[0];
       sy += v[1];
     });
-    return { x: sx / vs.length, y: sy / vs.length, spatialReference: { wkid: 4326 } };
+    return { type: "point", x: sx / vs.length, y: sy / vs.length, spatialReference: { wkid: 4326 } };
   }
 
   /**
@@ -388,29 +396,59 @@ window.NRPCReportMaps = (function () {
    *     vertex is by construction the end that is about THIS parcel, and it
    *     is roughly where the row's distance was measured to.
    *
-   * Nearest VERTEX, not nearest point on the nearest segment: the difference
-   * is metres on geometry that is already only a key into a list, and this
-   * needs no projection to get right.
+   * Nearest point on the nearest SEGMENT, not nearest vertex.
+   *
+   * It was nearest vertex, with a note saying the difference was "metres on
+   * geometry that is already only a key into a list". Measured on
+   * PID 2902924410044 on 2026-08-27, the difference is KILOMETRES. The Winter
+   * Workshop connection layer's corridors are drawn with three and four
+   * vertices spanning twenty kilometres: rows 2 and 3 are 268 m and 996 m from
+   * this parcel — the report says so, because the SERVER measured it — and
+   * their nearest vertices are 11.7 km and 8.5 km away. So the number landed
+   * nowhere near the thing it labels, and Plate 3, which frames on the numbers,
+   * opened out to a 14.7 km frame in which the parcel was 0.5% of the sheet.
+   *
+   * A segment projection is about eight lines and needs no projection library:
+   * scale x by cos(latitude), clamp the parameter to [0,1], and take the best
+   * over every segment. It puts the number where the distance in the list was
+   * actually measured to, which is what a reader assumes it means.
    */
   function labelPoint(geom, toward) {
     if (!geom) return null;
     if (geom.type === "point") return geom;
-    const vs = verticesOf(geom);
-    if (!vs.length) return null;
     const t = toward || meanPoint(geom);
     if (!t) return null;
     // Latitude-corrected so "nearest" means nearest on the ground, not
     // nearest in degrees, which at 45 N is 1.4× wrong in x.
     const kx = Math.cos((t.y * Math.PI) / 180);
+    const parts = geom.rings || geom.paths || [];
     let best = null;
     let bestD = Infinity;
-    vs.forEach(v => {
-      const dx = (v[0] - t.x) * kx;
-      const dy = v[1] - t.y;
+    const consider = (x, y) => {
+      const dx = (x - t.x) * kx;
+      const dy = y - t.y;
       const d = dx * dx + dy * dy;
       if (d < bestD) {
         bestD = d;
-        best = v;
+        best = [x, y];
+      }
+    };
+    parts.forEach(part => {
+      if (!part.length) return;
+      consider(part[0][0], part[0][1]);
+      for (let i = 1; i < part.length; i++) {
+        const [ax, ay] = part[i - 1];
+        const [bx, by] = part[i];
+        consider(bx, by);
+        // Project the target onto this segment, in the same cos-lat-scaled
+        // plane the comparison uses, and clamp to the segment's ends.
+        const vx = (bx - ax) * kx;
+        const vy = by - ay;
+        const len2 = vx * vx + vy * vy;
+        if (!len2) continue;
+        let u = (((t.x - ax) * kx) * vx + (t.y - ay) * vy) / len2;
+        if (u <= 0 || u >= 1) continue;
+        consider(ax + (bx - ax) * u, ay + (by - ay) * u);
       }
     });
     return best ? { type: "point", x: best[0], y: best[1], spatialReference: { wkid: 4326 } } : null;
@@ -970,10 +1008,15 @@ window.NRPCReportMaps = (function () {
 
     const pad = Math.round(110 * S);
     const titleH = Math.round(210 * S);
-    // The sources block runs to four wrapped lines on a 2550-wide sheet and
-    // more on a landscape one whose text column is wider; measured rather than
-    // assumed, so a long note cannot push the last line off the page.
-    const footH = Math.round((s.notes && s.notes.length ? 300 + 34 * s.notes.length : 300) * S);
+    // The footer is MEASURED, not guessed.
+    //
+    // It was `300 + 34 per note`, which was right for the one plate that
+    // existed. Plate 2 adds a seven-row score table and six source lines, and
+    // the guess put the map window 300 px too tall: the Esri attribution — the
+    // line Esri's terms actually require — ran off the bottom of the sheet.
+    // measureFooter() wraps the same strings with the same fonts the drawing
+    // pass uses, so what is reserved is what is drawn.
+    const footH = measureFooter(ctx, s, W, pad, S);
     const mapX = pad;
     const mapY = pad + titleH;
     const mapH = H - mapY - footH - pad;
@@ -1168,7 +1211,7 @@ window.NRPCReportMaps = (function () {
 
     // -- Plate 3's data legend: the card, in the column --
     if (s.cards && s.cards.length) {
-      colY = drawCards(ctx, s.cards, colX, colY, colW, S);
+      colY = drawCards(ctx, s.cards, colX, colY, colW, S, mapY + mapH - colY);
     }
 
     // -- Plate 2's sub-score table, in the furniture under the map --
@@ -1224,6 +1267,39 @@ window.NRPCReportMaps = (function () {
     };
   }
 
+  /**
+   * How tall the block under the map has to be: the score table, the notes, the
+   * date line and the sources, wrapped with the same fonts and to the same
+   * width the drawing pass will use.
+   *
+   * This exists because the alternative — a constant plus a per-note allowance
+   * — silently truncated Plate 2's sources at the foot of the sheet, and the
+   * line it truncated was Esri's required attribution.
+   */
+  function measureFooter(ctx, s, W, pad, S) {
+    const textW = W - pad * 2;
+    let h = Math.round(52 * S); // the gap between the map window and the block
+    if (s.table && s.table.rows && s.table.rows.length) {
+      const perCol = Math.ceil(s.table.rows.length / 2);
+      h += Math.round(40 * S) + perCol * Math.round(32 * S) + Math.round(52 * S);
+    }
+    if (s.notes && s.notes.length) {
+      ctx.font = `${Math.round(23 * S)}px Georgia, "Times New Roman", serif`;
+      s.notes.forEach(t => {
+        h += wrap(ctx, t, textW).length * Math.round(30 * S);
+      });
+      h += Math.round(12 * S);
+    }
+    h += Math.round(38 * S); // "Map produced ..."
+    ctx.font = `${Math.round(21 * S)}px Georgia, "Times New Roman", serif`;
+    (s.sources || defaultSources()).forEach(t => {
+      h += wrap(ctx, t, textW).length * Math.round(28 * S);
+    });
+    // The corner coordinates hang below the map window's bottom edge and the
+    // block starts under them.
+    return h + Math.round(30 * S);
+  }
+
   /** Swatch rows. Returns the y it finished at. */
   function drawLegendRows(ctx, entries, x, y, maxW, S, rowH) {
     ctx.font = `${Math.round(24 * S)}px Georgia, "Times New Roman", serif`;
@@ -1276,26 +1352,43 @@ window.NRPCReportMaps = (function () {
    * a legend in the cartographic sense: the numbers on the map mean nothing
    * without it.
    */
-  function drawCards(ctx, cards, x, y, w, S) {
+  function drawCards(ctx, cards, x, y, w, S, availH, measureOnly) {
+    // Five cards of seven lines each do not fit a landscape sheet's column at
+    // the full body size — measured: 1,627 px wanted against 1,474 px of
+    // column on PID 2411921110001. So the block is measured first and the type
+    // stepped down until it fits, no further than 0.72 of full size, at which
+    // point it is still 17 px on a 300 dpi sheet. A legend that runs off the
+    // bottom of the sheet loses a whole contribution; a legend a point smaller
+    // loses nothing.
+    if (!measureOnly && availH) {
+      let fit = 1;
+      for (const f of [1, 0.92, 0.85, 0.78, 0.72]) {
+        fit = f;
+        if (drawCards(ctx, cards, x, y, w, S * f, 0, true) - y <= availH) break;
+      }
+      return drawCards(ctx, cards, x, y, w, S * fit, 0, false);
+    }
     let yy = y;
     const bodyPx = Math.round(24 * S);
     const lineH = Math.round(29 * S);
     cards.forEach(card => {
       const r = Math.round(17 * S);
-      ctx.beginPath();
-      ctx.arc(x + r, yy + r, r, 0, Math.PI * 2);
-      ctx.fillStyle = "#fff";
-      ctx.fill();
-      ctx.strokeStyle = `rgb(${card.rgb[0]},${card.rgb[1]},${card.rgb[2]})`;
-      ctx.lineWidth = Math.max(2, Math.round(3 * S));
-      ctx.stroke();
-      ctx.fillStyle = "#111";
-      ctx.font = `700 ${Math.round(23 * S)}px sans-serif`;
-      ctx.textAlign = "center";
-      ctx.textBaseline = "middle";
-      ctx.fillText(String(card.n), x + r, yy + r + Math.round(1 * S));
-      ctx.textAlign = "left";
-      ctx.textBaseline = "top";
+      if (!measureOnly) {
+        ctx.beginPath();
+        ctx.arc(x + r, yy + r, r, 0, Math.PI * 2);
+        ctx.fillStyle = "#fff";
+        ctx.fill();
+        ctx.strokeStyle = `rgb(${card.rgb[0]},${card.rgb[1]},${card.rgb[2]})`;
+        ctx.lineWidth = Math.max(2, Math.round(3 * S));
+        ctx.stroke();
+        ctx.fillStyle = "#111";
+        ctx.font = `700 ${Math.round(23 * S)}px sans-serif`;
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.fillText(String(card.n), x + r, yy + r + Math.round(1 * S));
+        ctx.textAlign = "left";
+        ctx.textBaseline = "top";
+      }
 
       const tx = x + r * 2 + Math.round(14 * S);
       const tw = w - (r * 2 + Math.round(14 * S));
@@ -1316,17 +1409,19 @@ window.NRPCReportMaps = (function () {
           ctx.fillStyle = "#222";
         }
         wrap(ctx, ln.text, tw).forEach(l => {
-          ctx.fillText(l, tx, ty);
+          if (!measureOnly) ctx.fillText(l, tx, ty);
           ty += lineH;
         });
       });
       yy = Math.max(ty, yy + r * 2) + Math.round(16 * S);
-      ctx.strokeStyle = "rgba(0,0,0,0.14)";
-      ctx.lineWidth = Math.max(1, Math.round(1.5 * S));
-      ctx.beginPath();
-      ctx.moveTo(x, yy - Math.round(8 * S));
-      ctx.lineTo(x + w, yy - Math.round(8 * S));
-      ctx.stroke();
+      if (!measureOnly) {
+        ctx.strokeStyle = "rgba(0,0,0,0.14)";
+        ctx.lineWidth = Math.max(1, Math.round(1.5 * S));
+        ctx.beginPath();
+        ctx.moveTo(x, yy - Math.round(8 * S));
+        ctx.lineTo(x + w, yy - Math.round(8 * S));
+        ctx.stroke();
+      }
       yy += Math.round(12 * S);
     });
     return yy;
@@ -1544,11 +1639,18 @@ window.NRPCReportMaps = (function () {
     // furniture will draw it into or the blit crops it.
 
     const plates = [];
-    const plateWindow = (size, layout, notes) => {
+
+    // The capture has to be taken at the shape of the map WINDOW the furniture
+    // will draw it into, or composeFurniture's cover-fit crops it. So the
+    // window geometry is computed here with the same arithmetic — including
+    // the same measured footer, off a throwaway 2d context, because a guess
+    // here and a measurement there is the same bug in two places.
+    const plateWindow = (size, spec) => {
       const S = size.w / 2550;
       const pad = Math.round(110 * S);
-      const footH = Math.round((notes ? 300 + 34 * notes : 300) * S);
-      const colW = layout === "map-left" ? Math.round((size.w - pad * 2) * 0.37) : 0;
+      const probe = document.createElement("canvas").getContext("2d");
+      const footH = measureFooter(probe, spec, size.w, pad, S);
+      const colW = spec.layout === "map-left" ? Math.round((size.w - pad * 2) * 0.37) : 0;
       const colGap = colW ? Math.round(46 * S) : 0;
       return {
         w: size.w - pad * 2 - colW - colGap,
@@ -1557,7 +1659,7 @@ window.NRPCReportMaps = (function () {
     };
 
     async function plate(name, kind, size, spec, capOpts) {
-      const win = plateWindow(size, spec.layout, (spec.notes || []).length);
+      const win = plateWindow(size, spec);
       const shot = await capture(facts, kind, {
         width: Math.min(win.w, 2400),
         height: Math.min(win.h, 2400),
@@ -1898,6 +2000,8 @@ window.NRPCReportMaps = (function () {
       parcelAspect,
       parcelGroundWidthM,
       haversine,
+      labelPoint,
+      geomFromEsriJson,
       clip,
       plateOneLegend,
       plateTwoLegend,
