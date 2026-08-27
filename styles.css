@@ -730,6 +730,10 @@ body,
   word-break: break-word;
 }
 
+/* Dead as of the nearest-five card: the contributor and the date used to
+   share one grey footer line, and they are now two of the card's own fields.
+   Kept because .pr-opp-print-by is still named in js/docx-writer.js's class
+   map, and a half-removal is worse than an unused rule. */
 .pr-opp-by {
   font-size: 10px;
   color: #aaa;
