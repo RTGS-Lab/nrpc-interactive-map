@@ -88,6 +88,7 @@
       );
     }
     if (o.keepNext) props.push("<w:keepNext/>");
+    if (o.jc) props.push(`<w:jc w:val="${o.jc}"/>`);
     const pPr = props.length ? `<w:pPr>${props.join("")}</w:pPr>` : "";
     return `<w:p>${pPr}${runsXml || ""}</w:p>`;
   }
@@ -169,6 +170,81 @@
    * failure: a new section added to the print view appears in the DOCX as
    * plain prose rather than disappearing from it.
    */
+  // ── Images ────────────────────────────────────────────────────────────────
+  //
+  // The print document's figures are <img src="data:image/png;base64,…">,
+  // captured by js/report-maps.js. A .docx wants them as binary parts under
+  // word/media plus one relationship each, referenced from a w:drawing. One
+  // capture therefore serves both exports: the PDF gets the <img> and Word
+  // gets the same bytes.
+  //
+  // Collected per conversion, not globally — two exports in a row must not
+  // share a relationship id.
+
+  const EMU_PER_INCH = 914400;
+  const TWIPS_PER_INCH = 1440;
+  const BODY_W_EMU = Math.round((BODY_W / TWIPS_PER_INCH) * EMU_PER_INCH);
+  // 11in less the 0.75in margins, with slack so a full-page plate still leaves
+  // room for the paragraph mark Word insists on.
+  const BODY_H_EMU = Math.round(9.2 * EMU_PER_INCH);
+
+  let images = [];
+
+  /** Register a data: URL and return its relationship id, or null. */
+  function addImage(dataUrl) {
+    const m = /^data:image\/(png|jpeg);base64,(.+)$/.exec(dataUrl || "");
+    if (!m) return null;
+    const n = images.length + 1;
+    const ext = m[1] === "jpeg" ? "jpg" : "png";
+    const rec = { name: `image${n}.${ext}`, base64: m[2], relId: `rId${100 + n}` };
+    images.push(rec);
+    return rec.relId;
+  }
+
+  /**
+   * An inline picture paragraph, scaled to fit the text column — and, for the
+   * full-page plate, the page — while keeping its aspect ratio.
+   */
+  function drawing(relId, pxW, pxH, alt, fitPage) {
+    const maxW = BODY_W_EMU;
+    const maxH = fitPage ? BODY_H_EMU : Math.round(4.6 * EMU_PER_INCH);
+    const aspect = pxH / pxW;
+    let cx = maxW;
+    let cy = Math.round(cx * aspect);
+    if (cy > maxH) {
+      cy = maxH;
+      cx = Math.round(cy / aspect);
+    }
+    const id = images.length + 1;
+    const A = "http://schemas.openxmlformats.org/drawingml/2006/main";
+    const PIC = "http://schemas.openxmlformats.org/drawingml/2006/picture";
+    return (
+      '<w:p><w:pPr><w:jc w:val="center"/><w:spacing w:after="60"/></w:pPr><w:r><w:drawing>' +
+      '<wp:inline distT="0" distB="0" distL="0" distR="0">' +
+      `<wp:extent cx="${cx}" cy="${cy}"/>` +
+      '<wp:effectExtent l="0" t="0" r="0" b="0"/>' +
+      `<wp:docPr id="${id}" name="Picture ${id}" descr="${xml(alt || "")}"/>` +
+      "<wp:cNvGraphicFramePr/>" +
+      `<a:graphic xmlns:a="${A}"><a:graphicData uri="${PIC}">` +
+      `<pic:pic xmlns:pic="${PIC}">` +
+      `<pic:nvPicPr><pic:cNvPr id="${id}" name="Picture ${id}"/><pic:cNvPicPr/></pic:nvPicPr>` +
+      `<pic:blipFill><a:blip r:embed="${relId}"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill>` +
+      `<pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="${cx}" cy="${cy}"/></a:xfrm>` +
+      '<a:prstGeom prst="rect"><a:avLst/></a:prstGeom></pic:spPr>' +
+      "</pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p>"
+    );
+  }
+
+  const pageBreak = () => '<w:p><w:r><w:br w:type="page"/></w:r></w:p>';
+
+  /** The natural pixel size of a captured figure, for the aspect ratio. */
+  function imgSize(img) {
+    return {
+      w: img.naturalWidth || Number(img.getAttribute("width")) || 1600,
+      h: img.naturalHeight || Number(img.getAttribute("height")) || 1000,
+    };
+  }
+
   function block(node, out) {
     if (node.nodeType === 3) {
       const t = node.nodeValue.replace(/\s+/g, " ").trim();
@@ -186,6 +262,53 @@
         textOf(tr.children[1] || { textContent: "" }),
       ]);
       if (rows.length) out.push(table(rows));
+      return;
+    }
+
+    // The 8.5 x 11 plate: its own page, sized to the page rather than the
+    // column, and nothing else on it.
+    if (/pr-print-plate\b/.test(cls)) {
+      const img = node.querySelector("img");
+      if (!img) return;
+      const rel = addImage(img.src);
+      if (!rel) return;
+      const s = imgSize(img);
+      out.push(pageBreak());
+      out.push(drawing(rel, s.w, s.h, img.alt, true));
+      return;
+    }
+
+    // An inline argument map: the picture, then its caption as fine print.
+    // Keeping them in one paragraph pair is what stops Word floating the
+    // caption onto the next page on its own.
+    if (/pr-print-figure\b/.test(cls)) {
+      const img = node.querySelector("img");
+      const cap = node.querySelector("figcaption");
+      if (img) {
+        const rel = addImage(img.src);
+        if (rel) {
+          const s = imgSize(img);
+          out.push(drawing(rel, s.w, s.h, img.alt, false));
+        }
+      }
+      if (cap) {
+        const title = cap.querySelector(".pr-print-figure-title");
+        const body = cap.querySelector(".pr-print-figure-caption");
+        const src = cap.querySelector(".pr-print-figure-source");
+        const runs =
+          (title ? run(textOf(title) + " ", { b: true }) : "") +
+          (body ? run(textOf(body)) : "");
+        if (runs) out.push(para(runs, "Small", { jc: "center" }));
+        if (src) out.push(para(run(textOf(src)), "Small", { jc: "center" }));
+      }
+      return;
+    }
+
+    if (tag === "img") {
+      const rel = addImage(node.src);
+      if (!rel) return;
+      const s = imgSize(node);
+      out.push(drawing(rel, s.w, s.h, node.alt, false));
       return;
     }
 
@@ -269,6 +392,10 @@
     '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">' +
     '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>' +
     '<Default Extension="xml" ContentType="application/xml"/>' +
+    // The report maps. A Default per extension is enough; Word does not need
+    // an Override per image part.
+    '<Default Extension="png" ContentType="image/png"/>' +
+    '<Default Extension="jpg" ContentType="image/jpeg"/>' +
     '<Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>' +
     '<Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/>' +
     '<Override PartName="/word/numbering.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.numbering+xml"/>' +
@@ -282,12 +409,22 @@
     '<Relationship Id="rId2" Type="http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties" Target="docProps/core.xml"/>' +
     "</Relationships>";
 
-  const DOC_RELS =
-    '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
-    `<Relationships xmlns="${PKG_REL}">` +
-    `<Relationship Id="rId1" Type="${OFFICE_REL}/styles" Target="styles.xml"/>` +
-    `<Relationship Id="rId2" Type="${OFFICE_REL}/numbering" Target="numbering.xml"/>` +
-    "</Relationships>";
+  /** Styles and numbering, plus one relationship per captured map. */
+  function docRels(imgs) {
+    return (
+      '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+      `<Relationships xmlns="${PKG_REL}">` +
+      `<Relationship Id="rId1" Type="${OFFICE_REL}/styles" Target="styles.xml"/>` +
+      `<Relationship Id="rId2" Type="${OFFICE_REL}/numbering" Target="numbering.xml"/>` +
+      imgs
+        .map(
+          i =>
+            `<Relationship Id="${i.relId}" Type="${OFFICE_REL}/image" Target="media/${i.name}"/>`
+        )
+        .join("") +
+      "</Relationships>"
+    );
+  }
 
   const NUMBERING =
     '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
@@ -373,6 +510,9 @@
       throw new Error("Nothing to export: the print document is empty.");
     }
 
+    // Per conversion: two exports in a row must not share relationship ids.
+    images = [];
+
     const out = [];
     root.childNodes.forEach(n => block(n, out));
 
@@ -383,9 +523,16 @@
       'w:header="720" w:footer="720" w:gutter="0"/>' +
       "</w:sectPr>";
 
+    // wp / r / a / pic are only needed once images are in play, but declaring
+    // them always is simpler than two document shapes and costs a line.
     const document_xml =
       '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
-      `<w:document xmlns:w="${W}"><w:body>${out.join("")}${sectPr}</w:body></w:document>`;
+      `<w:document xmlns:w="${W}" ` +
+      `xmlns:r="${OFFICE_REL}" ` +
+      'xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" ' +
+      'xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" ' +
+      'xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture">' +
+      `<w:body>${out.join("")}${sectPr}</w:body></w:document>`;
 
     const zip = new JSZip();
     zip.file("[Content_Types].xml", CONTENT_TYPES);
@@ -395,7 +542,11 @@
     word.file("document.xml", document_xml);
     word.file("styles.xml", STYLES);
     word.file("numbering.xml", NUMBERING);
-    word.folder("_rels").file("document.xml.rels", DOC_RELS);
+    word.folder("_rels").file("document.xml.rels", docRels(images));
+    if (images.length) {
+      const media = word.folder("media");
+      images.forEach(i => media.file(i.name, i.base64, { base64: true }));
+    }
 
     // No compression level games: a .docx is small and Word cares only that
     // the entries are DEFLATE or STORE.

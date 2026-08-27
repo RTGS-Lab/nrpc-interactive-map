@@ -951,9 +951,19 @@
           f => !onIds.has(f.attributes.OBJECTID)
         );
 
-        return { layer, rows, candidates, error: null, truncated: onFeatures.length >= 25 };
+        // Geometry for the report maps. The on-parcel query asks for none (it
+        // only needs to know *that* a contribution is on the parcel), but the
+        // distance query returns the same features WITH geometry — an
+        // on-parcel feature is trivially within D of the parcel — so one index
+        // over nearJson covers both tiers without a third round trip.
+        const geomById = new Map();
+        (nearJson.features || []).forEach(f => {
+          if (f.geometry) geomById.set(f.attributes.OBJECTID, f.geometry);
+        });
+
+        return { layer, rows, candidates, geomById, error: null, truncated: onFeatures.length >= 25 };
       } catch (e) {
-        return { layer, rows: [], candidates: [], error: e.message, truncated: false };
+        return { layer, rows: [], candidates: [], geomById: new Map(), error: e.message, truncated: false };
       }
     });
 
@@ -1054,6 +1064,38 @@
         "to the nearest point of the contribution. These are proposals and observations, " +
         "not commitments.",
       items: all,
+      // Geometry for the report maps, kept OUT of `items` on purpose: items go
+      // to the model through compactOpportunities(), which whitelists fields,
+      // and a wall of coordinates is the last thing that request needs. Drawn
+      // by js/report-maps.js, read by nothing else.
+      mapGeometry: {
+        adjacentParcels: adj.parcels.map(p => ({
+          pid: p.pid,
+          city: p.city,
+          rings: p.geometry && p.geometry.rings ? p.geometry.rings : null,
+        })),
+        features: (() => {
+          const index = new Map();
+          results.forEach(r => {
+            if (!r.geomById) return;
+            r.geomById.forEach((g, oid) => index.set(r.layer.key + ":" + oid, { g, layer: r.layer }));
+          });
+          return all
+            .map(row => {
+              const hit = index.get(row.id);
+              if (!hit) return null;
+              return {
+                id: row.id,
+                relation: row.relation,
+                geometryType: hit.layer.geometry,
+                geometry: hit.g,
+                organization: row.organization,
+                adjacentParcelPid: row.adjacentParcelPid || null,
+              };
+            })
+            .filter(Boolean);
+        })(),
+      },
       onParcelCount: count(ON_PARCEL),
       onAdjacentCount: count(ON_ADJACENT),
       nearbyCount: count(NEARBY),
@@ -1145,6 +1187,9 @@
 
     return {
       clickedAt: { lat, lon },
+      // The parcel's own outline, in 4326, for js/report-maps.js. Not sent to
+      // the model — buildPayload() picks the fields it sends.
+      parcelRings: hasRings ? feature.geometry.rings : null,
       identity: {
         pid: clean(a.PID),
         address,
@@ -1322,6 +1367,11 @@
 
   function buildUserMessage(facts, includeOwner) {
     const payload = JSON.parse(JSON.stringify(facts));
+    // Geometry is for the report maps, not for the model: a parcel outline is
+    // a few hundred coordinate pairs the brief cannot use and would pay for.
+    // (sharedOpportunities.mapGeometry goes the same way, one line below,
+    // because compactOpportunities() rebuilds that object from a whitelist.)
+    delete payload.parcelRings;
     if (!includeOwner) {
       delete payload.owner;
       payload.ownerWithheld =
@@ -1797,7 +1847,7 @@
    * from. `reportHTML` is what renderMarkdown() already escaped and rendered,
    * so nothing here re-introduces raw model output.
    */
-  function buildPrintDoc(root, facts, reportHTML, meta) {
+  function buildPrintDoc(root, facts, reportHTML, meta, maps) {
     const f = facts;
     root.innerHTML = "";
 
@@ -1807,6 +1857,40 @@
       const s = el("section", { className: "pr-print-section" });
       s.append(el("h2", { textContent: heading }), ...kept);
       root.append(s);
+    };
+
+    /**
+     * One inline argument map. Returns null when the capture was not made, so
+     * every call site can append unconditionally and a failed capture simply
+     * leaves the section as it was — an export missing a figure beats an
+     * export that did not happen.
+     *
+     * The <img> src is a data: URL. docx-writer.js recognises .pr-print-figure
+     * and turns the same bytes into a w:drawing, so one capture serves the PDF
+     * and the DOCX.
+     */
+    const figureFor = kind => {
+      const fig = maps && maps.figures ? maps.figures.find(x => x.kind === kind) : null;
+      if (!fig) return null;
+      const node = el("figure", { className: "pr-print-figure" });
+      const img = el("img", { className: "pr-print-figure-img" });
+      img.src = fig.dataUrl;
+      img.alt = fig.title + " — " + fig.caption;
+      img.setAttribute("data-nrpc-figure", kind);
+      // Explicit pixel dimensions, because #pr-print is display:none until the
+      // print stylesheet arms and an undisplayed <img> never decodes — its
+      // naturalWidth is 0, and docx-writer.js sized the plate from a fallback
+      // aspect ratio because of it.
+      img.width = fig.width;
+      img.height = fig.height;
+      const cap = el("figcaption");
+      cap.append(
+        el("span", { className: "pr-print-figure-title", textContent: fig.title + " " }),
+        el("span", { className: "pr-print-figure-caption", textContent: fig.caption }),
+        el("span", { className: "pr-print-figure-source", textContent: fig.source })
+      );
+      node.append(img, cap);
+      return node;
     };
 
     // -- header --
@@ -1876,6 +1960,8 @@
       ])
     );
 
+    root.append(figureFor("facts"));
+
     // -- the model --
     if (f.model) {
       const rankText =
@@ -1930,6 +2016,8 @@
           "A count marked + is a floor: the query returns at most eight features per layer.",
       })
     );
+
+    root.append(figureFor("context"));
 
     // -- shared opportunities --
     // Unlike the context table this one is not label/value: each contribution
@@ -2033,6 +2121,10 @@
         })
       );
     }
+    // The adjacency map belongs INSIDE the opportunities section, not after
+    // it: it is the evidence for the tiers the section just listed.
+    const oppFigure = figureFor("opportunity");
+    if (oppFigure) oppSection.append(oppFigure);
     root.append(oppSection);
 
     // -- the brief --
@@ -2060,7 +2152,37 @@
           "substitute for a site visit, a survey, or a title search.",
       })
     );
+    // A capture that did not happen is said out loud rather than left as a
+    // gap the reader has to notice.
+    if (maps && maps.failures && maps.failures.length) {
+      foot.append(
+        el("p", {
+          textContent:
+            "Some maps could not be captured for this export (" +
+            maps.failures.join(", ") +
+            ") and the sections they belong to are printed without them.",
+        })
+      );
+    }
     root.append(foot);
+
+    // -- the 8.5 x 11 plate, its own page --
+    // Last, and page-broken before, so it is a sheet a reader can pull out.
+    if (maps && maps.plate) {
+      const plate = el("section", { className: "pr-print-plate" });
+      const img = el("img", { className: "pr-print-plate-img" });
+      img.src = maps.plate.dataUrl;
+      img.alt =
+        "Parcel map, 8.5 by 11 inches: aerial imagery with the parcel outline, the parcels " +
+        "touching it, the shared opportunities by tier, a scale bar, a north arrow, a legend " +
+        "and corner coordinates.";
+      img.setAttribute("data-nrpc-figure", "plate");
+      img.setAttribute("data-nrpc-plate-orientation", maps.plate.orientation);
+      img.width = maps.plate.width;
+      img.height = maps.plate.height;
+      plate.append(img);
+      root.append(plate);
+    }
   }
 
   // ── UI ───────────────────────────────────────────────────────────────────
@@ -2562,6 +2684,30 @@
     // brief: the facts, the scores, the context layers and the shared
     // opportunities are worth a document on their own, and the brief is added
     // to it when there is one.
+    /**
+     * Capture the report maps. Runs at EXPORT time, not on every selection:
+     * four captures cost seconds and most selections are never exported, so
+     * paying for them on each click would make the map feel slow for a feature
+     * the user did not ask for.
+     *
+     * Never throws. A failed capture returns a result whose `failures` list
+     * the print document prints, and the export goes ahead without the figure.
+     */
+    let lastMaps = null;
+    async function prepareMaps(onStatus) {
+      if (!window.NRPCReportMaps || !facts) return null;
+      const t0 = Date.now();
+      try {
+        const maps = await window.NRPCReportMaps.buildAll(facts, onStatus);
+        maps.wallMs = Date.now() - t0;
+        lastMaps = maps;
+        return maps;
+      } catch (e) {
+        console.warn("[parcel-report] map capture failed wholesale:", e);
+        return { figures: [], plate: null, failures: ["all maps"], totalMs: Date.now() - t0 };
+      }
+    }
+
     docxBtn.addEventListener("click", async () => {
       if (!facts) return;
       if (!window.NRPCDocx) {
@@ -2570,10 +2716,16 @@
       }
       const label = docxBtn.textContent;
       docxBtn.disabled = true;
-      docxBtn.textContent = "Building…";
+      docxBtn.textContent = "Preparing maps…";
       try {
         const meta = lastReport || { generatedAt: new Date(), model: null };
-        buildPrintDoc(printRoot, facts, lastReport ? lastReport.html : null, meta);
+        const maps = await prepareMaps(s => {
+          docxBtn.textContent = "Preparing maps…";
+          setStatus(s, "ok");
+        });
+        docxBtn.textContent = "Building…";
+        setStatus("");
+        buildPrintDoc(printRoot, facts, lastReport ? lastReport.html : null, meta, maps);
         const pid = facts.identity.pid || "parcel";
         const blob = await window.NRPCDocx.docxFromPrintRoot(printRoot, "Parcel Report " + pid);
         const a = document.createElement("a");
@@ -2600,9 +2752,20 @@
       }
     });
 
-    exportBtn.addEventListener("click", () => {
+    exportBtn.addEventListener("click", async () => {
       if (!facts || !lastReport) return;
-      buildPrintDoc(printRoot, facts, lastReport.html, lastReport);
+      const label = exportBtn.textContent;
+      exportBtn.disabled = true;
+      exportBtn.textContent = "Preparing maps…";
+      let maps = null;
+      try {
+        maps = await prepareMaps(s => setStatus(s, "ok"));
+      } finally {
+        exportBtn.disabled = false;
+        exportBtn.textContent = label;
+        setStatus("");
+      }
+      buildPrintDoc(printRoot, facts, lastReport.html, lastReport, maps);
       // The class arms the print stylesheet. It stays on until the report is
       // replaced, so a plain Ctrl+P after an export prints the report too —
       // and before any export, Ctrl+P still prints the map as it always did.
@@ -2705,16 +2868,24 @@
       shareUrl,
       // Build the .docx and hand it back rather than downloading it, so a test
       // can open the bytes without driving a browser download.
-      docxBlob: async () => {
+      docxBlob: async withMaps => {
         const meta = lastReport || { generatedAt: new Date(), model: null };
-        buildPrintDoc(printRoot, facts, lastReport ? lastReport.html : null, meta);
+        const maps = withMaps === false ? null : await prepareMaps(() => {});
+        buildPrintDoc(printRoot, facts, lastReport ? lastReport.html : null, meta, maps);
         return window.NRPCDocx.docxFromPrintRoot(printRoot, "Parcel Report");
       },
-      buildPrintDoc: () => {
+      buildPrintDoc: async withMaps => {
         if (!facts || !lastReport) return false;
-        buildPrintDoc(printRoot, facts, lastReport.html, lastReport);
+        const maps = withMaps === false ? null : await prepareMaps(() => {});
+        buildPrintDoc(printRoot, facts, lastReport.html, lastReport, maps);
         document.body.classList.add("pr-print-ready");
         return true;
+      },
+      // The capture pipeline on its own, for verifying a map without building
+      // a document around it. Returns {figures, plate, totalMs, failures}.
+      prepareMaps: onStatus => prepareMaps(onStatus || (() => {})),
+      get maps() {
+        return lastMaps;
       },
     };
 
