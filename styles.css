@@ -1371,6 +1371,25 @@ body,
     max-height: 9.7in;
     margin: 0 auto;
   }
+
+  /* There are three plates since 27 Aug, and the third is LANDSCAPE — 3300 x
+     2550. The two maxima above already handle it and no new rule is needed:
+     max-width binds first (7.2in across 3300px), so it prints 7.2 x 5.56in,
+     well inside the 9.7in the portrait plates use. Measured, not assumed.
+
+     A `@page` with a landscape :nth() was considered and rejected. It would
+     have to name a page from a stylesheet armed at runtime, Chrome and Firefox
+     do not agree about that, and a sheet that comes out right in one engine
+     and rotated in the other is worse than one that is 7.2in wide in both.
+
+     Anything marked pr-docx-only is for the DOCX conversion only:
+     js/docx-writer.js walks the DOM and never reads CSS, so a node hidden here
+     still becomes a real table there. Plate 3's legend table uses it — the
+     landscape sheet's legend type lands near 6.5pt once Word has scaled it
+     into the text column. */
+  #pr-print .pr-docx-only {
+    display: none !important;
+  }
 }
 
 /* ══════════════════════════════════════════════════════════════════════════

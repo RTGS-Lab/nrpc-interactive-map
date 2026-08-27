@@ -2270,6 +2270,43 @@
     return lines;
   }
 
+  /**
+   * The same card, as plain text, for Plate 3's legend column.
+   *
+   * Bryan, 27 Aug: the nearest-5 plate should carry "data rich labeling (same
+   * info in the report but in the legend for the map)". "Same info" is the
+   * whole requirement, so this calls the SAME helpers opportunityCardLines()
+   * calls — opportunityOrgText, opportunityContactParts, opportunityScoreText,
+   * opportunityAddedText, opportunityWhere. Two formatters over one set of
+   * helpers; the helpers are where the wording lives, and there is one of them.
+   *
+   * The rank is not in the head line: the plate draws it as a numbered disc
+   * beside the block, the way the map draws it.
+   *
+   * `style` is a hint js/report-maps.js turns into a canvas font: "head",
+   * "body", "quiet", "missing" (grey italic — a field nobody collected has to
+   * look different from one that is merely short).
+   */
+  function opportunityLegendLines(r) {
+    const maps = window.NRPCReportMaps;
+    const clip = maps && maps._internals ? maps._internals.clip : s => s;
+    const cap = maps && maps._internals ? maps._internals.CARD_DESC_MAX : 220;
+    const c = opportunityContactParts(r);
+    const hasScore = !!(r.score && r.score.value !== null && r.score.value !== undefined);
+    return [
+      { text: opportunityOrgText(r), style: r.organization ? "head" : "missing" },
+      { text: c.name + " · " + c.email, style: c.hasName || c.hasEmail ? "body" : "missing" },
+      { text: opportunityScoreText(r), style: hasScore ? "body" : "missing" },
+      { text: opportunityAddedText(r), style: r.contributedOn ? "body" : "missing" },
+      { text: r.type + " · " + r.source, style: "quiet" },
+      {
+        text: r.description ? clip(r.description, cap) : "Description " + NOT_RECORDED,
+        style: r.description ? "body" : "missing",
+      },
+      { text: opportunityWhere(r), style: "quiet" },
+    ];
+  }
+
   function opportunityPanelBlock(opps, bufferM) {
     const box = el("div", { className: "pr-opps" });
     const searched = adjacencyWorked(opps) ? opps.adjacency.parcelsSearched : 0;
@@ -2768,23 +2805,41 @@
     }
     root.append(foot);
 
-    // -- the 8.5 x 11 plate, its own page --
-    // Last, and page-broken before, so it is a sheet a reader can pull out.
-    if (maps && maps.plate) {
+    // -- the 8.5 x 11 plates, one per page --
+    // Last, and page-broken before each, so they are sheets a reader can pull
+    // out. Three of them since 27 Aug: the parcel and its neighbourhood, then
+    // ecological sensitivity and suitability, then the nearest shared
+    // opportunities with the whole card in the legend.
+    const plateList = (maps && maps.plates) || (maps && maps.plate ? [maps.plate] : []);
+    plateList.forEach(pl => {
       const plate = el("section", { className: "pr-print-plate" });
       const img = el("img", { className: "pr-print-plate-img" });
-      img.src = maps.plate.dataUrl;
-      img.alt =
-        "Parcel map, 8.5 by 11 inches: aerial imagery with the parcel outline, the parcels " +
-        "touching it, the shared opportunities by tier, a scale bar, a north arrow, a legend " +
-        "and corner coordinates.";
-      img.setAttribute("data-nrpc-figure", "plate");
-      img.setAttribute("data-nrpc-plate-orientation", maps.plate.orientation);
-      img.width = maps.plate.width;
-      img.height = maps.plate.height;
+      img.src = pl.dataUrl;
+      img.alt = pl.alt || "Parcel map plate.";
+      img.setAttribute("data-nrpc-figure", "plate-" + pl.name);
+      img.setAttribute("data-nrpc-plate-orientation", pl.orientation);
+      img.width = pl.width;
+      img.height = pl.height;
       plate.append(img);
       root.append(plate);
-    }
+
+      // Plate 3's legend is nine lines a site, drawn on a landscape sheet that
+      // the DOCX scales to the 7-inch text column. Measured at that width the
+      // body type lands at about 6.5 pt — legible in the PDF, marginal in
+      // Word, and unreadable if anyone prints the .docx at anything less than
+      // 100%. So the DOCX gets the same rows a second time as real text under
+      // the image. The PDF does not need it and does not get it: the plate is
+      // the deliverable, and repeating a legend under it on paper is noise.
+      if (pl.name === "sites" && pl.legendRows && pl.legendRows.length) {
+        const t = el("table", { className: "pr-print-plate-legend pr-docx-only" });
+        pl.legendRows.forEach(([kk, vv]) => {
+          const tr = el("tr");
+          tr.append(el("td", { textContent: kk }), el("td", { textContent: vv }));
+          t.append(tr);
+        });
+        root.append(t);
+      }
+    });
   }
 
   // ── UI ───────────────────────────────────────────────────────────────────
@@ -3318,13 +3373,17 @@
       if (!window.NRPCReportMaps || !facts) return null;
       const t0 = Date.now();
       try {
-        const maps = await window.NRPCReportMaps.buildAll(facts, onStatus);
+        const maps = await window.NRPCReportMaps.buildAll(facts, onStatus, {
+          // Plate 3's legend is the report's own card. See
+          // opportunityLegendLines().
+          cardLines: opportunityLegendLines,
+        });
         maps.wallMs = Date.now() - t0;
         lastMaps = maps;
         return maps;
       } catch (e) {
         console.warn("[parcel-report] map capture failed wholesale:", e);
-        return { figures: [], plate: null, failures: ["all maps"], totalMs: Date.now() - t0 };
+        return { figures: [], plates: [], plate: null, failures: ["all maps"], totalMs: Date.now() - t0 };
       }
     }
 

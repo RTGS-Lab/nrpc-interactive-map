@@ -16,14 +16,27 @@
  *
  * WHAT IT DRAWS
  * -------------
- * Four maps, each making one argument:
+ * Three inline figures and three 8.5 x 11 plates, each making one argument:
  *
  *   facts        the parcel outline on aerial imagery — "this is the parcel"
  *   context      parcel + the 250 m ring — "this is what 'within 250 m' means"
  *   opportunity  parcel + adjacent parcels (dashed) + contributions by tier —
  *                the adjacency argument, which is the one a reader disputes
- *   plate        the 8.5 x 11 page: all of the above with full cartographic
- *                furniture composed on top with canvas 2D
+ *   plate        PLATE 1. The parcel in its neighbourhood: parcel, the parcels
+ *                touching it, the contributions by tier. NO 250 m ring — Bryan,
+ *                27 Aug: "For the final map, remove the 250m buffer." Figure 2
+ *                keeps its ring, because explaining the 250 m IS that figure.
+ *   eco          PLATE 2. Ecological sensitivity and suitability: the two Met
+ *                Council area layers over the Hennepin prioritization model's
+ *                own five published class breaks, framed ~500 m around the
+ *                parcel.
+ *   sites        PLATE 3. The nearest shared opportunities, landscape, with the
+ *                five numbered on the map and a legend column carrying the
+ *                whole card for each — on this plate the legend IS the data.
+ *
+ * All three plates are composed by ONE furniture function (composeFurniture),
+ * so the title block, scale bar, north arrow, legend, corner coordinates, date
+ * and sources cannot drift apart between them.
  *
  * Aerial imagery is Esri's World Imagery, per Bryan ("Basemap should be aerial
  * imagery"). Esri's terms require the attribution line, which is why the
@@ -91,6 +104,75 @@ window.NRPCReportMaps = (function () {
     "wider search": "Found by the wider search",
   };
 
+  // ── Plate 2's two thematic layers ────────────────────────────────────────
+  //
+  // Both read off the live `?f=json` on 2026-08-27; evidence kept beside this
+  // work in context/live-2026-08-27/.
+  //
+  // THE MET COUNCIL LAYERS DO NOT PUBLISH A CLASS FIELD. The design asked for
+  // "its class field, e.g. Outstanding / High / Moderate" — there is none. Each
+  // layer's whole schema is OBJECTID, source, CTU_NAME, Shape__Area,
+  // Shape__Length, its renderer is a SIMPLE renderer (one symbol, no field),
+  // and `returnDistinctValues` on `source` returns exactly one value per layer:
+  // "Ecologically Significant Area" (51 features) and "Ecologically Sensitive
+  // Area" (60 features). So the classification IS the layer: two layers, two
+  // classes, and that is what the legend says. Symbolising by a field that does
+  // not exist would have been an invented class.
+  const METC_SIGNIFICANT =
+    "https://services.arcgis.com/8df8p0NlLFEShl0r/arcgis/rest/services/Met_Council_Data_Ecologically_Significant_Areas/FeatureServer/106";
+  const METC_SENSITIVE =
+    "https://services.arcgis.com/8df8p0NlLFEShl0r/arcgis/rest/services/Met_Council_Data_Ecologically_Sensitive_Areas/FeatureServer/108";
+
+  // Hennepin County Parcel Prioritization Model results — the same service
+  // js/parcel-report.js reads the seven scores and the rank from, so the fill
+  // under the parcel and the number printed beside it are the same layer.
+  const MODEL_PARCEL =
+    "https://services.arcgis.com/8df8p0NlLFEShl0r/arcgis/rest/services/Hennepin_Suitability_Model_Results_parcel_detail/FeatureServer/97";
+
+  // The model's OWN breaks, not ours. The service publishes a classBreaks
+  // renderer on `Overall_Va` with these five classes and these five colours
+  // (a YlOrRd ramp); copying them means the plate matches what anyone sees in
+  // the web map or in ArcGIS Online rather than inventing a quantile that
+  // disagrees with both. Read from drawingInfo.renderer.classBreakInfos.
+  const MODEL_FIELD = "Overall_Va";
+  const MODEL_BREAKS = [
+    { max: 10.0705, label: "0.00 – 10.07", rgb: [255, 255, 204] },
+    { max: 15.3075, label: "10.07 – 15.31", rgb: [254, 217, 118] },
+    { max: 19.8327, label: "15.31 – 19.83", rgb: [253, 141, 60] },
+    { max: 33.3379, label: "19.83 – 33.34", rgb: [227, 26, 28] },
+    { max: 78.0392, label: "33.34 – 78.04", rgb: [128, 0, 38] },
+  ];
+
+  // Ecologically significant / sensitive areas, drawn OVER the model fill.
+  // Green and cyan because the model ramp owns yellow through dark red, and
+  // two ramps that share a hue cannot be told apart on a printed page.
+  const ECO_SYM = {
+    significant: {
+      rgb: [40, 190, 90],
+      label: "Met Council ecologically significant area",
+    },
+    sensitive: {
+      rgb: [60, 210, 220],
+      label: "Met Council ecologically sensitive area",
+    },
+  };
+
+  // Plate 2's frame: this far out from the parcel boundary, all round. Wide
+  // enough to read the neighbourhood's pattern of scores, tight enough that
+  // the subject parcel is still obviously the subject. The realised ground
+  // width is measured per capture and printed in the plate's own furniture.
+  const ECO_FRAME_M = 500;
+
+  // Plate 3: a legend row's description is a survey free-text field and can run
+  // for paragraphs. Past this it is cut at a word boundary with an ellipsis —
+  // the full text is in the report's card, three pages earlier.
+  const CARD_DESC_MAX = 220;
+
+  // Plate 3's inset trigger. Framing on a contribution a kilometre out can
+  // shrink the subject parcel to a smudge; below this share of the map window's
+  // width the parcel gets its own inset box and the furniture says so.
+  const INSET_TRIGGER = 0.10;
+
   let modules = null;
   let hiddenView = null;
   let hiddenContainer = null;
@@ -104,13 +186,23 @@ window.NRPCReportMaps = (function () {
           "esri/Map",
           "esri/views/MapView",
           "esri/layers/GraphicsLayer",
+          "esri/layers/FeatureLayer",
           "esri/Graphic",
           "esri/geometry/Polygon",
           "esri/geometry/geometryEngine",
           "esri/geometry/support/webMercatorUtils",
         ],
-        (Map, MapView, GraphicsLayer, Graphic, Polygon, geometryEngine, webMercatorUtils) => {
-          modules = { Map, MapView, GraphicsLayer, Graphic, Polygon, geometryEngine, webMercatorUtils };
+        (Map, MapView, GraphicsLayer, FeatureLayer, Graphic, Polygon, geometryEngine, webMercatorUtils) => {
+          modules = {
+            Map,
+            MapView,
+            GraphicsLayer,
+            FeatureLayer,
+            Graphic,
+            Polygon,
+            geometryEngine,
+            webMercatorUtils,
+          };
           resolve(modules);
         },
         reject
@@ -160,6 +252,74 @@ window.NRPCReportMaps = (function () {
   }
 
   const ring4326 = rings => ({ type: "polygon", rings, spatialReference: { wkid: 4326 } });
+
+  // ── Plate 2's operational layers ─────────────────────────────────────────
+  //
+  // Drawn by ArcGIS as real FeatureLayers rather than fetched and pushed into a
+  // GraphicsLayer by hand. The model layer holds 445,517 parcels: a hand-rolled
+  // query would have to page it, and a FeatureLayer already fetches only what
+  // the extent needs. Built once and reused across exports.
+
+  // Keyed on the line scale, because the outline widths are baked into the
+  // renderer and a plate captured at a different width needs different ones.
+  const ecoLayerCache = new Map();
+
+  function alpha(rgb, a) {
+    return [rgb[0], rgb[1], rgb[2], a];
+  }
+
+  function ecoLayerSet(m, k) {
+    const key = k.toFixed(3);
+    if (ecoLayerCache.has(key)) return ecoLayerCache.get(key);
+    const model = new m.FeatureLayer({
+      url: MODEL_PARCEL,
+      outFields: [MODEL_FIELD, "PID", "Rank"],
+      listMode: "hide",
+      renderer: {
+        type: "class-breaks",
+        field: MODEL_FIELD,
+        // Below the first break's minimum the service draws nothing; ours
+        // starts at -1 so a legitimate 0.0 parcel is coloured rather than
+        // silently dropped out of the picture.
+        classBreakInfos: MODEL_BREAKS.map((b, i) => ({
+          minValue: i === 0 ? -1 : MODEL_BREAKS[i - 1].max,
+          maxValue: b.max,
+          symbol: {
+            type: "simple-fill",
+            // 0.72, not 1: the aerial imagery has to stay legible under the
+            // choropleth or the plate stops being a map of a real place.
+            color: alpha(b.rgb, 0.72),
+            outline: { color: [255, 255, 255, 0.45], width: 0.4 * k },
+          },
+        })),
+      },
+    });
+    const areaLayer = (url, sym, dashed) =>
+      new m.FeatureLayer({
+        url,
+        outFields: ["source", "CTU_NAME"],
+        listMode: "hide",
+        renderer: {
+          type: "simple",
+          symbol: {
+            type: "simple-fill",
+            color: alpha(sym.rgb, 0.34),
+            outline: {
+              color: alpha(sym.rgb, 1),
+              width: 3.2 * k,
+              style: dashed ? "dash" : "solid",
+            },
+          },
+        },
+      });
+    const set = {
+      model,
+      significant: areaLayer(METC_SIGNIFICANT, ECO_SYM.significant, false),
+      sensitive: areaLayer(METC_SENSITIVE, ECO_SYM.sensitive, true),
+    };
+    ecoLayerCache.set(key, set);
+    return set;
+  }
 
   function geomFromEsriJson(g) {
     if (!g) return null;
@@ -320,8 +480,14 @@ window.NRPCReportMaps = (function () {
 
     // A geodesic buffer is the honest 250 m: a planar buffer in Web Mercator
     // at 45 N is short by the cosine of the latitude, ~29% here.
+    //
+    // Figure 2 ONLY. The plate used to draw it too; Bryan, 27 Aug: "For the
+    // final map, remove the 250m buffer." Figure 2 keeps it because that figure
+    // exists to show what "within 250 m" covers — take the ring out of it and
+    // there is no figure left. The plate's job is the parcel and its
+    // neighbours, and the ring was a second, weaker argument on the same sheet.
     let ring = null;
-    if (kind === "context" || kind === "plate") {
+    if (kind === "context") {
       try {
         ring = m.geometryEngine.geodesicBuffer(
           new m.Polygon(parcel),
@@ -339,7 +505,75 @@ window.NRPCReportMaps = (function () {
       frameOn.push(gr);
     }
 
-    if (kind === "opportunity" || kind === "plate") {
+    // Plate 2 is a thematic map: the model choropleth and the two Met Council
+    // area layers carry it, and the only graphic is the subject parcel, drawn
+    // heavily enough to find against a five-class ramp. Framed on a geodesic
+    // buffer rather than on the parcel plus a margin fraction, so "500 m out
+    // all round" means 500 metres on the ground and not a fraction of whatever
+    // this parcel's bounding box happens to be.
+    if (kind === "eco") {
+      let frameBuf = null;
+      try {
+        frameBuf = m.geometryEngine.geodesicBuffer(new m.Polygon(parcel), ECO_FRAME_M, "meters");
+      } catch (e) {
+        frameBuf = null;
+      }
+      // White under, dark blue over: a two-pass casing reads over both ends of
+      // a yellow-to-dark-red ramp, which no single colour does.
+      g.push(
+        new m.Graphic({
+          geometry: parcel,
+          symbol: scaleWidths(
+            { type: "simple-fill", color: [0, 0, 0, 0], outline: { color: [255, 255, 255, 1], width: 9 } },
+            k
+          ),
+        })
+      );
+      const parcelTop = new m.Graphic({
+        geometry: parcel,
+        symbol: scaleWidths(
+          { type: "simple-fill", color: [0, 0, 0, 0], outline: { color: [20, 60, 200, 1], width: 4.5 } },
+          k
+        ),
+      });
+      g.push(parcelTop);
+      frameOn.push(frameBuf ? new m.Graphic({ geometry: frameBuf }) : parcelTop);
+
+      // The parcel's own score and rank, on the parcel, so the sheet does not
+      // have to be read against the legend to find out what the subject scores.
+      // The percentile and the seven sub-scores are in the furniture; putting
+      // all of it here would cover the neighbourhood the plate is about.
+      const mod = facts.model;
+      if (mod && mod.scores) {
+        const overall = mod.scores["Overall Value"];
+        const at = meanPoint(parcel);
+        if (at && (overall !== null || mod.rank !== null)) {
+          const bits = [];
+          if (overall !== null && overall !== undefined) bits.push("Score " + overall.toFixed(3));
+          if (mod.rank !== null && mod.rank !== undefined)
+            bits.push("Rank " + mod.rank.toLocaleString("en-US"));
+          g.push(
+            new m.Graphic({
+              geometry: at,
+              symbol: {
+                type: "text",
+                text: bits.join(" · "),
+                color: [10, 10, 10, 1],
+                backgroundColor: [255, 255, 255, 0.94],
+                borderLineColor: [20, 60, 200, 1],
+                borderLineSize: Math.max(1, 1.5 * k),
+                haloColor: [255, 255, 255, 0.9],
+                haloSize: Math.max(1, 1.5 * k),
+                font: { size: Math.round(15 * k), weight: "bold", family: "sans-serif" },
+              },
+            })
+          );
+        }
+      }
+      return { graphics: g, frameOn, parcel, ring: null, frameGeometry: frameBuf };
+    }
+
+    if (kind === "opportunity" || kind === "plate" || kind === "sites") {
       (mg.adjacentParcels || []).forEach(p => {
         if (!p.rings) return;
         const gr = new m.Graphic({ geometry: ring4326(p.rings), symbol: scaleWidths(SYM.adjacent, k) });
@@ -354,7 +588,7 @@ window.NRPCReportMaps = (function () {
     g.push(parcelGr);
     frameOn.push(parcelGr);
 
-    if (kind === "opportunity" || kind === "plate") {
+    if (kind === "opportunity" || kind === "plate" || kind === "sites") {
       // Two passes, because a number drawn under a later polygon's fill is a
       // number nobody can read: every shape first, then every label on top.
       const labelled = [];
@@ -387,7 +621,13 @@ window.NRPCReportMaps = (function () {
           // Stack, rather than overprint, when two land on the same spot.
           const clash = placed.filter(p => labelGapM(p, at) < LABEL_CLUSTER_M).length;
           placed.push({ x: at.x, y: at.y });
-          if (f.relation !== "wider search") {
+          // Plate 3 is ABOUT the five, so it frames on all five including a
+          // widened row — Bryan asked for "the nearest 5 other sites", and a
+          // sheet whose legend numbers 1-5 while the map shows four of them is
+          // a sheet with a hole in it. That is exactly the case the inset rule
+          // below exists for: when the widened row drags the frame out far
+          // enough to shrink the parcel, the parcel gets its own box.
+          if (kind === "sites" || f.relation !== "wider search") {
             frameOn.push(new m.Graphic({ geometry: at }));
           }
           const rgb = SYM.tier[f.relation] || [200, 200, 200];
@@ -458,6 +698,14 @@ window.NRPCReportMaps = (function () {
       const view = await ensureView(w, h);
       const layer = new m.GraphicsLayer({ listMode: "hide" });
       view.map.removeAll();
+      // Plate 2's thematic layers go UNDER the graphics layer: the choropleth
+      // and the Met Council areas are the map, the parcel casing is the
+      // annotation on it, and a heavy blue outline behind a 72%-opaque fill is
+      // an outline nobody can see.
+      if (kind === "eco") {
+        const set = ecoLayerSet(m, w / INLINE_W);
+        view.map.addMany([set.model, set.significant, set.sensitive]);
+      }
       view.map.add(layer);
       layer.addMany(built.graphics);
 
@@ -468,6 +716,15 @@ window.NRPCReportMaps = (function () {
 
       // takeScreenshot() captures what has been drawn, so wait for the tiles.
       await whenStable(view, o.timeoutMs || 12000);
+      // A FeatureLayer is not done when the VIEW stops updating: its own
+      // layer view fetches and draws on its own schedule, and a plate captured
+      // before it finishes is a plate with an empty choropleth on it. Wait for
+      // each one's layer view to go quiet, then let whenStable's settle run
+      // again over the paint that follows.
+      if (kind === "eco") {
+        await ecoLayersDrawn(view, o.timeoutMs || 12000);
+        await whenStable(view, 6000);
+      }
 
       // JPEG, not PNG: aerial imagery is a photograph, and the four-map PNG
       // export measured 24.2 MB — too big to email. Quality 0.9 at 2x the
@@ -522,6 +779,45 @@ window.NRPCReportMaps = (function () {
   // 400 ms of real time, and the frame pair after it. Four captures, so this
   // costs an export about 1.6 s; a figure that argues nothing costs more.
   const SETTLE_MS = 400;
+
+  /**
+   * Resolve when every FeatureLayer on the view has finished fetching and
+   * drawing, or when the timeout gives up on it.
+   *
+   * `view.updating` covers the basemap and the view's own work; a
+   * FeatureLayer's layer view has an `updating` of its own, and on the model
+   * layer — 445,517 parcels, of which a plate frame pulls a couple of
+   * thousand — it is the one that takes the time. Best-effort like everything
+   * else here: a layer that never settles is captured mid-draw rather than
+   * failing the export.
+   */
+  async function ecoLayersDrawn(view, timeoutMs) {
+    const deadline = Date.now() + timeoutMs;
+    const lvs = await Promise.all(
+      view.map.layers
+        .filter(l => l.type === "feature")
+        .toArray()
+        .map(l => view.whenLayerView(l).catch(() => null))
+    );
+    await Promise.all(
+      lvs.filter(Boolean).map(
+        lv =>
+          new Promise(resolve => {
+            if (!lv.updating) return resolve();
+            const timer = setTimeout(() => {
+              if (handle) handle.remove();
+              resolve();
+            }, Math.max(0, deadline - Date.now()));
+            const handle = lv.watch("updating", up => {
+              if (up) return;
+              clearTimeout(timer);
+              handle.remove();
+              resolve();
+            });
+          })
+      )
+    );
+  }
 
   /** Resolve when the view stops updating AND has had time to paint. */
   function whenStable(view, timeoutMs) {
@@ -622,15 +918,47 @@ window.NRPCReportMaps = (function () {
   const fmtLat = v => `${Math.abs(v).toFixed(4)}° ${v < 0 ? "S" : "N"}`;
 
   /**
-   * Compose the printed plate: the captured map inset in a bordered frame with
-   * title, scale bar, north arrow, legend, corner coordinates, date and
-   * sources. Returns a PNG data URL.
+   * ONE function composes all three plates.
+   *
+   * Plate 1, Plate 2 and Plate 3 are three different arguments on the same
+   * sheet of paper, and the thing that makes them read as a set is that the
+   * title block, the scale bar, the north arrow, the corner coordinates, the
+   * date and the sources are IDENTICAL on all three — same sizes, same
+   * positions, same wording. The first version of this file had one plate and
+   * a `composePlate`; three copies of that with small edits is how a scale bar
+   * ends up verified on one sheet and wrong on the next.
+   *
+   * So a plate is a `spec` and this draws it:
+   *
+   *   { title, subtitle, kicker      the title block, three lines
+   *     layout: "full"|"map-left"    map across the sheet, or map left and a
+   *                                  legend column down the right
+   *     legend: {title, entries[]}   swatch rows: {label, fill, stroke, dash,
+   *                                  disc} — `disc` draws a numbered circle
+   *                                  instead of a rectangle
+   *     cards: [{n, rgb, lines[]}]   Plate 3's data legend: a numbered block
+   *                                  per site, each line {text, style}
+   *     table: {title, rows[[k,v]]}  Plate 2's sub-score table
+   *     notes: [string]              lines under the map, above the sources
+   *     inset: {dataUrl, caption}    a small framed map in the map window's
+   *                                  corner, for when the main frame had to
+   *                                  open up so far the parcel got small }
+   *
+   * Returns { dataUrl, mapPx, mPerPx, barMetres, groundWidthM } — the measured
+   * numbers as well as the picture, because the scale bar is verified against
+   * them rather than eyeballed.
    */
-  async function composePlate(shot, facts, opts) {
-    const o = opts || {};
+  async function composeFurniture(shot, facts, spec) {
+    const s = spec || {};
     const W = shot.plateW;
     const H = shot.plateH;
-    const S = W / 2550; // scale every dimension off the portrait width
+    // Every dimension scales off the portrait plate's width. A landscape sheet
+    // is 3300 px, so S is 1.294 and every type size grows with it — which is
+    // the point: both sheets are scaled to the same 7.2 in printed width by
+    // styles.css, so the wider sheet has more pixels per printed inch and type
+    // drawn at a fixed pixel size would come out physically SMALLER on it.
+    // Plate 3's legend is the whole argument of the sheet; it cannot shrink.
+    const S = W / 2550;
 
     const cv = document.createElement("canvas");
     cv.width = W;
@@ -642,30 +970,43 @@ window.NRPCReportMaps = (function () {
 
     const pad = Math.round(110 * S);
     const titleH = Math.round(210 * S);
-    const footH = Math.round(300 * S);
+    // The sources block runs to four wrapped lines on a 2550-wide sheet and
+    // more on a landscape one whose text column is wider; measured rather than
+    // assumed, so a long note cannot push the last line off the page.
+    const footH = Math.round((s.notes && s.notes.length ? 300 + 34 * s.notes.length : 300) * S);
     const mapX = pad;
     const mapY = pad + titleH;
-    const mapW = W - pad * 2;
     const mapH = H - mapY - footH - pad;
+    // "map-left" gives the legend column 37% of the sheet. Measured against the
+    // real cards: at 2550 px of landscape width that is a 1155 px column, which
+    // holds a 40-character line at the 26 px body size — about what a reader
+    // wants before their eye loses the row.
+    const colW = s.layout === "map-left" ? Math.round((W - pad * 2) * 0.37) : 0;
+    const colGap = colW ? Math.round(46 * S) : 0;
+    const mapW = W - pad * 2 - colW - colGap;
 
     // -- title block --
     const id = facts.identity || {};
-    const title = id.address ? `${id.address}, ${id.city || ""}`.replace(/,\s*$/, "") : "Hennepin County parcel";
+    const where = id.address ? `${id.address}, ${id.city || ""}`.replace(/,\s*$/, "") : "Hennepin County parcel";
     ctx.fillStyle = "#111";
     ctx.textAlign = "left";
     ctx.textBaseline = "top";
     ctx.font = `700 ${Math.round(58 * S)}px Georgia, "Times New Roman", serif`;
-    ctx.fillText(title, pad, pad - Math.round(26 * S));
+    ctx.fillText(s.title || where, pad, pad - Math.round(26 * S));
     ctx.font = `${Math.round(34 * S)}px Georgia, "Times New Roman", serif`;
     ctx.fillStyle = "#444";
     ctx.fillText(
-      `PID ${id.pid || "unknown"}` + (id.zip ? ` · ${id.zip}` : ""),
+      s.subtitle || `${where} · PID ${id.pid || "unknown"}` + (id.zip ? ` · ${id.zip}` : ""),
       pad,
       pad + Math.round(52 * S)
     );
     ctx.font = `${Math.round(26 * S)}px Georgia, "Times New Roman", serif`;
     ctx.fillStyle = "#666";
-    ctx.fillText("NRPC Interactive Map · parcel and shared-opportunity context", pad, pad + Math.round(104 * S));
+    ctx.fillText(
+      s.kicker || "NRPC Interactive Map · parcel and shared-opportunity context",
+      pad,
+      pad + Math.round(104 * S)
+    );
 
     // -- the map --
     const img = await loadImage(shot.dataUrl);
@@ -673,7 +1014,7 @@ window.NRPCReportMaps = (function () {
     ctx.beginPath();
     ctx.rect(mapX, mapY, mapW, mapH);
     ctx.clip();
-    // The capture was taken at the plate's own aspect ratio, so this is a
+    // The capture was taken at the map window's own aspect ratio, so this is a
     // straight blit; cover-fit anyway so a mismatch crops rather than stretches.
     const sc = Math.max(mapW / img.width, mapH / img.height);
     const dw = img.width * sc;
@@ -736,86 +1077,317 @@ window.NRPCReportMaps = (function () {
     ctx.textBaseline = "top";
     ctx.font = `${Math.round(20 * S)}px Georgia, "Times New Roman", serif`;
     ctx.fillStyle = "#444";
-    ctx.fillText(`1 cm ≈ ${Math.round(mPerPx * (W / 21.59) / 10) * 10} m at 8.5 in wide`, bx, by + barH + Math.round(6 * S));
+    // Centimetres of PAPER, not captured pixels — and the sheet's own nominal
+    // width, which is 11 in on a landscape plate and 8.5 in on a portrait one.
+    // The printed inches are named in the line because the exports scale both
+    // sheets into the portrait usable box; the bar itself is the unambiguous
+    // statement of scale and is what a reader should measure against.
+    const sheetIn = W > H ? 11 : 8.5;
+    const cmPerPx = (sheetIn * 2.54) / W;
+    ctx.fillText(
+      `1 cm ≈ ${Math.round(mPerPx / cmPerPx / 10) * 10} m at ${sheetIn} in wide`,
+      bx,
+      by + barH + Math.round(6 * S)
+    );
     ctx.restore();
 
     // -- north arrow --
     drawNorthArrow(ctx, mapX + mapW - Math.round(86 * S), mapY + Math.round(116 * S), Math.round(62 * S));
 
-    // -- legend --
-    const entries = legendEntries(facts);
-    if (entries.length) {
-      ctx.font = `${Math.round(24 * S)}px Georgia, "Times New Roman", serif`;
-      const lw = Math.round(
-        Math.max(...entries.map(e => ctx.measureText(e.label).width)) + 96 * S
-      );
-      const lh = Math.round(entries.length * 40 * S + 58 * S);
-      const lx = mapX + Math.round(34 * S);
-      const ly = mapY + Math.round(34 * S);
+    // -- the inset, when the main frame had to open up too far --
+    // Bottom right of the map window, clear of the scale bar (bottom left) and
+    // the north arrow (top right).
+    if (s.inset && s.inset.dataUrl) {
+      const iw = Math.round(mapW * 0.26);
+      const ih = iw;
+      const ix = mapX + mapW - iw - Math.round(30 * S);
+      const iy = mapY + mapH - ih - Math.round(30 * S);
+      const capH = Math.round(38 * S);
       ctx.save();
-      rounded(ctx, lx, ly, lw, lh, Math.round(10 * S));
-      ctx.fillStyle = "rgba(255,255,255,0.90)";
-      ctx.fill();
-      ctx.strokeStyle = "rgba(0,0,0,0.35)";
-      ctx.lineWidth = Math.max(1, Math.round(2 * S));
-      ctx.stroke();
+      ctx.fillStyle = "rgba(255,255,255,0.94)";
+      ctx.fillRect(ix - Math.round(8 * S), iy - Math.round(8 * S), iw + Math.round(16 * S), ih + capH + Math.round(16 * S));
+      const iim = await loadImage(s.inset.dataUrl);
+      ctx.beginPath();
+      ctx.rect(ix, iy, iw, ih);
+      ctx.clip();
+      const isc = Math.max(iw / iim.width, ih / iim.height);
+      ctx.drawImage(iim, ix + (iw - iim.width * isc) / 2, iy + (ih - iim.height * isc) / 2, iim.width * isc, iim.height * isc);
+      ctx.restore();
+      ctx.strokeStyle = "#111";
+      ctx.lineWidth = Math.max(2, Math.round(3 * S));
+      ctx.strokeRect(ix, iy, iw, ih);
       ctx.fillStyle = "#111";
-      ctx.font = `700 ${Math.round(24 * S)}px Georgia, "Times New Roman", serif`;
+      ctx.font = `700 ${Math.round(22 * S)}px Georgia, "Times New Roman", serif`;
       ctx.textAlign = "left";
       ctx.textBaseline = "top";
-      ctx.fillText("Legend", lx + Math.round(18 * S), ly + Math.round(14 * S));
-      ctx.font = `${Math.round(24 * S)}px Georgia, "Times New Roman", serif`;
-      entries.forEach((e, i) => {
-        const ey = ly + Math.round(56 * S + i * 40 * S);
-        const sw = Math.round(38 * S);
-        const sh = Math.round(20 * S);
-        const sx = lx + Math.round(18 * S);
-        ctx.fillStyle = e.fill;
-        ctx.fillRect(sx, ey, sw, sh);
-        ctx.strokeStyle = e.stroke;
-        ctx.lineWidth = Math.max(1, Math.round(2.5 * S));
-        if (e.dash) ctx.setLineDash([Math.round(6 * S), Math.round(5 * S)]);
-        ctx.strokeRect(sx, ey, sw, sh);
-        ctx.setLineDash([]);
-        ctx.fillStyle = "#111";
-        ctx.fillText(e.label, sx + sw + Math.round(14 * S), ey - Math.round(2 * S));
-      });
-      ctx.restore();
+      ctx.fillText(s.inset.caption || "Inset: the parcel", ix, iy + ih + Math.round(9 * S));
     }
 
-    // -- footer: date + sources --
-    const fy = mapY + mapH + Math.round(58 * S);
+    // -- legend --
+    // On a "full" plate it floats over the map's top-left corner, where it has
+    // always been. On a "map-left" plate it heads the right-hand column, on
+    // white, because Plate 3's legend is nine lines a site and no amount of
+    // translucency makes that readable over aerial imagery.
+    let colY = mapY;
+    const colX = mapX + mapW + colGap;
+
+    if (s.legend && s.legend.entries && s.legend.entries.length) {
+      const e = s.legend.entries;
+      const rowH = Math.round(40 * S);
+      if (s.layout === "map-left") {
+        ctx.fillStyle = "#111";
+        ctx.font = `700 ${Math.round(30 * S)}px Georgia, "Times New Roman", serif`;
+        ctx.textAlign = "left";
+        ctx.textBaseline = "top";
+        ctx.fillText(s.legend.title || "Legend", colX, colY);
+        colY += Math.round(46 * S);
+        colY = drawLegendRows(ctx, e, colX, colY, colW, S, rowH);
+        colY += Math.round(22 * S);
+      } else {
+        ctx.font = `${Math.round(24 * S)}px Georgia, "Times New Roman", serif`;
+        const lw = Math.round(Math.max(...e.map(x => ctx.measureText(x.label).width)) + 96 * S);
+        const lh = Math.round(e.length * rowH + 58 * S);
+        const lx = mapX + Math.round(34 * S);
+        const ly = mapY + Math.round(34 * S);
+        ctx.save();
+        rounded(ctx, lx, ly, lw, lh, Math.round(10 * S));
+        ctx.fillStyle = "rgba(255,255,255,0.90)";
+        ctx.fill();
+        ctx.strokeStyle = "rgba(0,0,0,0.35)";
+        ctx.lineWidth = Math.max(1, Math.round(2 * S));
+        ctx.stroke();
+        ctx.fillStyle = "#111";
+        ctx.font = `700 ${Math.round(24 * S)}px Georgia, "Times New Roman", serif`;
+        ctx.textAlign = "left";
+        ctx.textBaseline = "top";
+        ctx.fillText(s.legend.title || "Legend", lx + Math.round(18 * S), ly + Math.round(14 * S));
+        drawLegendRows(ctx, e, lx + Math.round(18 * S), ly + Math.round(56 * S), lw, S, rowH);
+        ctx.restore();
+      }
+    }
+
+    // -- Plate 3's data legend: the card, in the column --
+    if (s.cards && s.cards.length) {
+      colY = drawCards(ctx, s.cards, colX, colY, colW, S);
+    }
+
+    // -- Plate 2's sub-score table, in the furniture under the map --
+    let tableBottom = mapY + mapH;
+    if (s.table && s.table.rows && s.table.rows.length) {
+      tableBottom = drawTable(ctx, s.table, pad, mapY + mapH + Math.round(52 * S), W - pad * 2, S);
+    }
+
+    // -- footer: notes, date, sources --
+    const fy = (s.table ? tableBottom : mapY + mapH) + Math.round(52 * S);
     ctx.textAlign = "left";
     ctx.textBaseline = "top";
+    let yy = fy;
+    if (s.notes && s.notes.length) {
+      ctx.fillStyle = "#222";
+      ctx.font = `${Math.round(23 * S)}px Georgia, "Times New Roman", serif`;
+      s.notes.forEach(t => {
+        wrap(ctx, t, W - pad * 2).forEach(l => {
+          ctx.fillText(l, pad, yy);
+          yy += Math.round(30 * S);
+        });
+      });
+      yy += Math.round(12 * S);
+    }
     ctx.fillStyle = "#111";
     ctx.font = `700 ${Math.round(24 * S)}px Georgia, "Times New Roman", serif`;
-    ctx.fillText("Map produced " + fmtDate(shot.capturedAt), pad, fy);
+    ctx.fillText("Map produced " + fmtDate(shot.capturedAt), pad, yy);
+    yy += Math.round(38 * S);
     ctx.font = `${Math.round(21 * S)}px Georgia, "Times New Roman", serif`;
     ctx.fillStyle = "#444";
-    const lines = [
-      DATA_ATTRIB,
-      ESRI_ATTRIB,
-      "Projection: Web Mercator (EPSG:3857). Grid: WGS 84 (EPSG:4326) corner coordinates. North is true north.",
-      "Produced by the NRPC Interactive Map, University of Minnesota. Not a survey; boundaries are approximate.",
-    ];
-    let yy = fy + Math.round(38 * S);
-    lines.forEach(t => {
+    (s.sources || defaultSources()).forEach(t => {
       wrap(ctx, t, W - pad * 2).forEach(l => {
         ctx.fillText(l, pad, yy);
         yy += Math.round(28 * S);
       });
     });
 
-    // Slightly higher quality than the inline figures: the plate carries text
-    // (title, legend, scale bar) that JPEG blocking would soften.
-    return cv.toDataURL("image/jpeg", 0.94);
+    // The realised ground width across the map window, measured off the
+    // captured extent's own corners rather than derived from the resolution
+    // the scale bar uses — which is what makes the 0.00% check in
+    // outputs/verify-plates.js an independent check and not a tautology.
+    const groundWidthM = ext ? haversine(ext.ymin, ext.xmin, ext.ymin, ext.xmax) : null;
+
+    return {
+      // Slightly higher quality than the inline figures: the plates carry text
+      // (title, legend, scale bar, and on Plate 3 the whole card) that JPEG
+      // blocking would soften.
+      dataUrl: cv.toDataURL("image/jpeg", 0.94),
+      mapPx: { x: mapX, y: mapY, w: mapW, h: mapH },
+      mPerPx,
+      barMetres: barM,
+      groundWidthM,
+    };
   }
 
-  function legendEntries(facts) {
+  /** Swatch rows. Returns the y it finished at. */
+  function drawLegendRows(ctx, entries, x, y, maxW, S, rowH) {
+    ctx.font = `${Math.round(24 * S)}px Georgia, "Times New Roman", serif`;
+    ctx.textAlign = "left";
+    ctx.textBaseline = "top";
+    let yy = y;
+    entries.forEach(e => {
+      const sw = Math.round(38 * S);
+      const sh = Math.round(20 * S);
+      if (e.disc) {
+        // The numbered discs on Plates 1 and 3, drawn the way the map draws
+        // them, so a reader matching "3" on the sheet to "3" in the column is
+        // matching the same object and not two similar ones.
+        const r = Math.round(15 * S);
+        ctx.beginPath();
+        ctx.arc(x + r, yy + r - Math.round(2 * S), r, 0, Math.PI * 2);
+        ctx.fillStyle = "rgba(255,255,255,0.95)";
+        ctx.fill();
+        ctx.strokeStyle = e.stroke;
+        ctx.lineWidth = Math.max(1, Math.round(2.5 * S));
+        ctx.stroke();
+        ctx.fillStyle = "#111";
+        ctx.font = `700 ${Math.round(21 * S)}px sans-serif`;
+        ctx.textAlign = "center";
+        ctx.fillText(String(e.disc), x + r, yy + Math.round(2 * S));
+        ctx.textAlign = "left";
+        ctx.font = `${Math.round(24 * S)}px Georgia, "Times New Roman", serif`;
+      } else {
+        ctx.fillStyle = e.fill;
+        ctx.fillRect(x, yy, sw, sh);
+        ctx.strokeStyle = e.stroke;
+        ctx.lineWidth = Math.max(1, Math.round(2.5 * S));
+        if (e.dash) ctx.setLineDash([Math.round(6 * S), Math.round(5 * S)]);
+        ctx.strokeRect(x, yy, sw, sh);
+        ctx.setLineDash([]);
+      }
+      ctx.fillStyle = "#111";
+      const lines = wrap(ctx, e.label, maxW - sw - Math.round(20 * S));
+      lines.forEach((l, li) => ctx.fillText(l, x + sw + Math.round(14 * S), yy - Math.round(2 * S) + li * Math.round(28 * S)));
+      yy += Math.max(rowH, lines.length * Math.round(28 * S) + Math.round(10 * S));
+    });
+    return yy;
+  }
+
+  /**
+   * Plate 3's data legend. Bryan asked for "data rich labeling (same info in
+   * the report but in the legend for the map)", so this is the report's card
+   * — organisation, contact name, email, score with its scale, date added,
+   * source layer, description, distance — laid out as a numbered block. It is
+   * a legend in the cartographic sense: the numbers on the map mean nothing
+   * without it.
+   */
+  function drawCards(ctx, cards, x, y, w, S) {
+    let yy = y;
+    const bodyPx = Math.round(24 * S);
+    const lineH = Math.round(29 * S);
+    cards.forEach(card => {
+      const r = Math.round(17 * S);
+      ctx.beginPath();
+      ctx.arc(x + r, yy + r, r, 0, Math.PI * 2);
+      ctx.fillStyle = "#fff";
+      ctx.fill();
+      ctx.strokeStyle = `rgb(${card.rgb[0]},${card.rgb[1]},${card.rgb[2]})`;
+      ctx.lineWidth = Math.max(2, Math.round(3 * S));
+      ctx.stroke();
+      ctx.fillStyle = "#111";
+      ctx.font = `700 ${Math.round(23 * S)}px sans-serif`;
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText(String(card.n), x + r, yy + r + Math.round(1 * S));
+      ctx.textAlign = "left";
+      ctx.textBaseline = "top";
+
+      const tx = x + r * 2 + Math.round(14 * S);
+      const tw = w - (r * 2 + Math.round(14 * S));
+      let ty = yy;
+      card.lines.forEach(ln => {
+        const style = ln.style || "body";
+        if (style === "head") {
+          ctx.font = `700 ${Math.round(26 * S)}px Georgia, "Times New Roman", serif`;
+          ctx.fillStyle = "#111";
+        } else if (style === "missing") {
+          ctx.font = `italic ${bodyPx}px Georgia, "Times New Roman", serif`;
+          ctx.fillStyle = "#8a8a8a";
+        } else if (style === "quiet") {
+          ctx.font = `${Math.round(22 * S)}px Georgia, "Times New Roman", serif`;
+          ctx.fillStyle = "#555";
+        } else {
+          ctx.font = `${bodyPx}px Georgia, "Times New Roman", serif`;
+          ctx.fillStyle = "#222";
+        }
+        wrap(ctx, ln.text, tw).forEach(l => {
+          ctx.fillText(l, tx, ty);
+          ty += lineH;
+        });
+      });
+      yy = Math.max(ty, yy + r * 2) + Math.round(16 * S);
+      ctx.strokeStyle = "rgba(0,0,0,0.14)";
+      ctx.lineWidth = Math.max(1, Math.round(1.5 * S));
+      ctx.beginPath();
+      ctx.moveTo(x, yy - Math.round(8 * S));
+      ctx.lineTo(x + w, yy - Math.round(8 * S));
+      ctx.stroke();
+      yy += Math.round(12 * S);
+    });
+    return yy;
+  }
+
+  /** Plate 2's seven model scores, two columns of key/value. */
+  function drawTable(ctx, table, x, y, w, S) {
+    ctx.textAlign = "left";
+    ctx.textBaseline = "top";
+    ctx.fillStyle = "#111";
+    ctx.font = `700 ${Math.round(26 * S)}px Georgia, "Times New Roman", serif`;
+    ctx.fillText(table.title, x, y);
+    let yy = y + Math.round(40 * S);
+    const cols = 2;
+    const colW = Math.floor(w / cols);
+    const rowH = Math.round(32 * S);
+    const perCol = Math.ceil(table.rows.length / cols);
+    ctx.font = `${Math.round(23 * S)}px Georgia, "Times New Roman", serif`;
+    table.rows.forEach(([kk, vv], i) => {
+      const c = Math.floor(i / perCol);
+      const r = i % perCol;
+      const cx = x + c * colW;
+      const cy = yy + r * rowH;
+      ctx.fillStyle = "#444";
+      ctx.fillText(kk, cx, cy);
+      ctx.fillStyle = "#111";
+      ctx.textAlign = "right";
+      ctx.fillText(vv, cx + colW - Math.round(40 * S), cy);
+      ctx.textAlign = "left";
+    });
+    return yy + perCol * rowH;
+  }
+
+  function defaultSources() {
+    return [
+      DATA_ATTRIB,
+      ESRI_ATTRIB,
+      "Projection: Web Mercator (EPSG:3857). Grid: WGS 84 (EPSG:4326) corner coordinates. North is true north.",
+      "Produced by the NRPC Interactive Map, University of Minnesota. Not a survey; boundaries are approximate.",
+    ];
+  }
+
+  /** Great-circle metres between two lat/lon pairs. */
+  function haversine(lat1, lon1, lat2, lon2) {
+    const R = 6371008.8;
+    const rad = Math.PI / 180;
+    const dLat = (lat2 - lat1) * rad;
+    const dLon = (lon2 - lon1) * rad;
+    const a =
+      Math.sin(dLat / 2) ** 2 +
+      Math.cos(lat1 * rad) * Math.cos(lat2 * rad) * Math.sin(dLon / 2) ** 2;
+    return 2 * R * Math.asin(Math.sqrt(a));
+  }
+
+  // ── The three plates' legend specs ───────────────────────────────────────
+
+  /** Plate 1. The 250 m ring row is gone with the ring itself. */
+  function plateOneLegend(facts) {
     const out = [
       { label: "Subject parcel", fill: "rgba(255,190,60,0.35)", stroke: "rgb(255,150,0)" },
       { label: "Parcels touching it", fill: "rgba(120,120,120,0.22)", stroke: "rgb(60,60,60)", dash: true },
-      { label: "250 m context ring", fill: "rgba(80,190,255,0.20)", stroke: "rgb(60,170,230)", dash: true },
     ];
     const opps = facts.sharedOpportunities;
     const present = new Set(((opps && opps.mapGeometry && opps.mapGeometry.features) || []).map(f => f.relation));
@@ -828,6 +1400,28 @@ window.NRPCReportMaps = (function () {
         stroke: `rgb(${c[0]},${c[1]},${c[2]})`,
       });
     });
+    return out;
+  }
+
+  /** Plate 2. The model's own five breaks, then the two Met Council classes. */
+  function plateTwoLegend() {
+    const out = MODEL_BREAKS.map(b => ({
+      label: b.label,
+      fill: `rgba(${b.rgb[0]},${b.rgb[1]},${b.rgb[2]},0.72)`,
+      stroke: "rgba(120,120,120,0.9)",
+    }));
+    out.push({
+      label: ECO_SYM.significant.label,
+      fill: `rgba(${ECO_SYM.significant.rgb.join(",")},0.34)`,
+      stroke: `rgb(${ECO_SYM.significant.rgb.join(",")})`,
+    });
+    out.push({
+      label: ECO_SYM.sensitive.label,
+      fill: `rgba(${ECO_SYM.sensitive.rgb.join(",")},0.34)`,
+      stroke: `rgb(${ECO_SYM.sensitive.rgb.join(",")})`,
+      dash: true,
+    });
+    out.push({ label: "Subject parcel", fill: "rgba(0,0,0,0)", stroke: "rgb(20,60,200)" });
     return out;
   }
 
@@ -849,17 +1443,23 @@ window.NRPCReportMaps = (function () {
    *
    * @param {object} facts       the assembled facts (needs parcelRings)
    * @param {function} onProgress called with a short status string
-   * @returns {Promise<{figures: object[], plate: object|null, totalMs: number,
-   *                    failures: string[]}>}
+   * @param {object} [options]    { cardLines }. `cardLines(row)` returns the
+   *   legend block for one contribution on Plate 3, as [{text, style}].
+   *   js/parcel-report.js supplies it from the same helpers that build the
+   *   report's own card, so the sheet and the list cannot say different things
+   *   about the same contribution. Omitted, a thinner fallback is used.
+   * @returns {Promise<{figures: object[], plates: object[], plate: object|null,
+   *                    totalMs: number, failures: string[]}>}
    */
-  async function buildAll(facts, onProgress) {
+  async function buildAll(facts, onProgress, options) {
     const say = onProgress || function () {};
+    const opts = options || {};
     const t0 = performance.now();
     const failures = [];
     const figures = [];
 
     if (!facts || !facts.parcelRings) {
-      return { figures: [], plate: null, totalMs: 0, failures: ["no parcel geometry"] };
+      return { figures: [], plates: [], plate: null, totalMs: 0, failures: ["no parcel geometry"] };
     }
 
     const plan = [
@@ -936,51 +1536,339 @@ window.NRPCReportMaps = (function () {
       });
     }
 
-    // -- the plate --
-    say("Preparing maps… the 8.5 × 11 page");
-    let plate = null;
-    try {
-      const box = parcelAspect(facts);
-      const size = box > 1.25 ? PLATE_LANDSCAPE : PLATE_PORTRAIT;
-      // Capture at the plate's map window aspect, not the page aspect.
+    // ── The three plates ──────────────────────────────────────────────────
+    //
+    // Each is captured at its own map window's aspect, then handed with a spec
+    // to composeFurniture(). The window geometry has to be computed here as
+    // well as there, because the capture has to be taken at the shape the
+    // furniture will draw it into or the blit crops it.
+
+    const plates = [];
+    const plateWindow = (size, layout, notes) => {
       const S = size.w / 2550;
       const pad = Math.round(110 * S);
-      const mapW = size.w - pad * 2;
-      const mapH = size.h - (pad + Math.round(210 * S)) - Math.round(300 * S) - pad;
-      const shot = await capture(facts, "plate", {
-        width: Math.min(mapW, 2400),
-        height: Math.min(mapH, 2400),
-        marginFraction: 0.16,
+      const footH = Math.round((notes ? 300 + 34 * notes : 300) * S);
+      const colW = layout === "map-left" ? Math.round((size.w - pad * 2) * 0.37) : 0;
+      const colGap = colW ? Math.round(46 * S) : 0;
+      return {
+        w: size.w - pad * 2 - colW - colGap,
+        h: size.h - (pad + Math.round(210 * S)) - footH - pad,
+      };
+    };
+
+    async function plate(name, kind, size, spec, capOpts) {
+      const win = plateWindow(size, spec.layout, (spec.notes || []).length);
+      const shot = await capture(facts, kind, {
+        width: Math.min(win.w, 2400),
+        height: Math.min(win.h, 2400),
         timeoutMs: 20000,
+        ...(capOpts || {}),
       });
-      if (shot) {
-        shot.plateW = size.w;
-        shot.plateH = size.h;
-        const dataUrl = await composePlate(shot, facts, {});
-        plate = {
-          dataUrl,
-          width: size.w,
-          height: size.h,
-          orientation: size === PLATE_LANDSCAPE ? "landscape" : "portrait",
-          capturedAt: shot.capturedAt,
-          captureMs: shot.captureMs,
-          resolutionMPerPx: shot.resolutionMPerPx,
-          extent4326: shot.extent4326,
-        };
-      } else {
-        failures.push("plate");
+      if (!shot) {
+        failures.push(name);
+        return null;
+      }
+      shot.plateW = size.w;
+      shot.plateH = size.h;
+      const composed = await composeFurniture(shot, facts, spec);
+      return {
+        name,
+        kind,
+        dataUrl: composed.dataUrl,
+        width: size.w,
+        height: size.h,
+        orientation: size === PLATE_LANDSCAPE ? "landscape" : "portrait",
+        capturedAt: shot.capturedAt,
+        captureMs: shot.captureMs,
+        // The scale-bar verification reads these: mPerPx is what the bar was
+        // drawn from, groundWidthM is the haversine across the extent's own
+        // corners, and the two have to agree to 0.00%.
+        resolutionMPerPx: composed.mPerPx,
+        captureResolutionMPerPx: shot.resolutionMPerPx,
+        groundWidthM: composed.groundWidthM,
+        barMetres: composed.barMetres,
+        mapPx: composed.mapPx,
+        extent4326: shot.extent4326,
+        alt: spec.alt,
+        title: spec.title,
+      };
+    }
+
+    // -- Plate 1: the parcel and its neighbourhood. No 250 m ring. --
+    say("Preparing maps… plate 1, the parcel");
+    try {
+      const size = parcelAspect(facts) > 1.25 ? PLATE_LANDSCAPE : PLATE_PORTRAIT;
+      const p = await plate(
+        "plate",
+        "plate",
+        size,
+        {
+          title: "The parcel and its neighbourhood",
+          layout: "full",
+          legend: { title: "Legend", entries: plateOneLegend(facts) },
+          notes: [
+            "Framed on the parcel and the parcels touching it. A contribution that runs past the edge " +
+              "continues beyond this frame.",
+          ],
+          alt:
+            "Parcel map, 8.5 by 11 inches: aerial imagery with the parcel outline, the parcels " +
+            "touching it, the shared opportunities by tier, a scale bar, a north arrow, a legend " +
+            "and corner coordinates.",
+        },
+        { marginFraction: 0.16 }
+      );
+      if (p) plates.push(p);
+    } catch (e) {
+      console.warn("[report-maps] plate 1 failed:", e);
+      failures.push("plate");
+    }
+
+    // -- Plate 2: ecological sensitivity and the suitability model --
+    say("Preparing maps… plate 2, sensitivity and suitability");
+    try {
+      const mod = facts.model;
+      const rows = mod && mod.scores ? Object.keys(mod.scores).map(kk => [kk, fmtScore(mod.scores[kk])]) : [];
+      const rankLine =
+        mod && mod.rank
+          ? `Rank ${mod.rank.toLocaleString("en-US")}` +
+            (mod.parcelsRanked ? ` of ${mod.parcelsRanked.toLocaleString("en-US")}` : "") +
+            (mod.topPercentOfCounty !== null && mod.topPercentOfCounty !== undefined
+              ? ` — top ${mod.topPercentOfCounty}% of the county`
+              : "")
+          : "This parcel is not present in the prioritization model layer.";
+      const p = await plate(
+        "eco",
+        "eco",
+        PLATE_PORTRAIT,
+        {
+          title: "Ecological sensitivity and suitability",
+          subtitle:
+            (facts.identity && facts.identity.address
+              ? facts.identity.address + " · "
+              : "") + `PID ${(facts.identity && facts.identity.pid) || "unknown"} · ${rankLine}`,
+          kicker:
+            "Hennepin County Parcel Prioritization Model, the layer's own five class breaks · " +
+            "Metropolitan Council ecologically significant and sensitive areas",
+          layout: "full",
+          legend: { title: "Overall Value (model score)", entries: plateTwoLegend() },
+          table: rows.length ? { title: "The parcel's model scores", rows } : null,
+          notes: [
+            `Every parcel in frame is shaded by its Overall Value in the Hennepin County Parcel ` +
+              `Prioritization Model. The five classes are the layer's OWN published breaks, not a ` +
+              `reclassification: they are what the service's renderer draws.`,
+            `The Metropolitan Council's ecologically significant and sensitive area layers publish no ` +
+              `class or rating field — the layer a polygon is in is the only distinction the data ` +
+              `carries, and that is what the legend shows.`,
+          ],
+          sources: [
+            "Model: Hennepin County Parcel Prioritization Model results (parcel detail), ArcGIS Online " +
+              "service Hennepin_Suitability_Model_Results_parcel_detail/97.",
+            "Ecological areas: Metropolitan Council, via Met_Council_Data_Ecologically_Significant_Areas/106 " +
+              "and Met_Council_Data_Ecologically_Sensitive_Areas/108.",
+            DATA_ATTRIB,
+            ESRI_ATTRIB,
+            "Projection: Web Mercator (EPSG:3857). Grid: WGS 84 (EPSG:4326) corner coordinates. North is true north.",
+            "Produced by the NRPC Interactive Map, University of Minnesota. Not a survey; boundaries are approximate.",
+          ],
+          alt:
+            "Ecological sensitivity and suitability map, 8.5 by 11 inches: parcels shaded by the " +
+            "Hennepin County prioritization model's overall value, Metropolitan Council ecologically " +
+            "significant and sensitive areas outlined over them, the subject parcel outlined in blue " +
+            "and labelled with its score and rank, with a legend, scale bar, north arrow, the seven " +
+            "model scores and corner coordinates.",
+        },
+        // Almost no margin: the frame IS the 500 m geodesic buffer, and the
+        // default 18% would quietly make "500 m out all round" 590 m.
+        { marginFraction: 0.02 }
+      );
+      if (p) {
+        p.frameMetres = ECO_FRAME_M;
+        plates.push(p);
       }
     } catch (e) {
-      console.warn("[report-maps] plate failed:", e);
-      failures.push("plate");
+      console.warn("[report-maps] plate 2 failed:", e);
+      failures.push("eco");
+    }
+
+    // -- Plate 3: the nearest shared opportunities, legend as data --
+    say("Preparing maps… plate 3, the nearest sites");
+    try {
+      const o = facts.sharedOpportunities;
+      const rows = (o && o.nearest) || [];
+      if (!rows.length) {
+        // Nothing to number and nothing to put in the column. A sheet whose
+        // legend is the data, with no data, is a blank sheet.
+        failures.push("sites (no contributions to plot)");
+      } else {
+        const cards = rows.map(r => ({
+          n: r.nearestRank,
+          rgb: SYM.tier[r.relation] || [200, 200, 200],
+          lines: (opts.cardLines ? opts.cardLines(r) : fallbackCardLines(r)).map(ln => ({
+            text: ln.text,
+            style: ln.style,
+          })),
+        }));
+
+        // The inset rule. Frame first, measure the parcel against the frame,
+        // and only then decide — the widened row that drags the frame out is
+        // the case this exists for, and it is a property of the data, not
+        // something that can be decided in advance.
+        const probe = await capture(facts, "sites", {
+          width: 1200,
+          height: 900,
+          marginFraction: 0.14,
+          timeoutMs: 20000,
+        });
+        let inset = null;
+        let insetNote = null;
+        if (probe && probe.extent4326) {
+          const e = probe.extent4326;
+          const frameW = haversine(e.ymin, e.xmin, e.ymin, e.xmax);
+          const pw = parcelGroundWidthM(facts);
+          if (pw && frameW && pw / frameW < INSET_TRIGGER) {
+            const ishot = await capture(facts, "plate", {
+              width: 900,
+              height: 900,
+              marginFraction: 0.3,
+              timeoutMs: 20000,
+            });
+            if (ishot) {
+              inset = { dataUrl: ishot.dataUrl, caption: "Inset: the parcel and its neighbours" };
+              insetNote =
+                `The five sites are spread far enough that the subject parcel is ` +
+                `${((pw / frameW) * 100).toFixed(1)}% of the frame's width, so it is shown again in the ` +
+                `inset at a legible scale. The inset is a different scale from the main map; the scale ` +
+                `bar applies to the main map only.`;
+            }
+          }
+        }
+
+        const notes = [
+          "The numbers on the map are the numbers in this legend and in the report's Nearest 5 list — " +
+            "one contribution, one number, in all three places.",
+        ];
+        if (insetNote) notes.push(insetNote);
+        if (o.widen && o.widen.added) {
+          notes.push(
+            `${o.widen.added} of the five came from the search widened once to ` +
+              `${o.widen.radiusMetres.toLocaleString("en-US")} m, because fewer than ` +
+              `${o.nearestLimit} contributions are on this parcel, on a parcel touching it, or ` +
+              `within ${o.bufferMetres} m.`
+          );
+        }
+
+        const p = await plate(
+          "sites",
+          "sites",
+          PLATE_LANDSCAPE,
+          {
+            title: "Nearest shared opportunities",
+            layout: "map-left",
+            legend: {
+              title: "Nearest " + rows.length + " contributions",
+              entries: [
+                { label: "Subject parcel", fill: "rgba(255,190,60,0.35)", stroke: "rgb(255,150,0)" },
+                {
+                  label: "Parcels touching it",
+                  fill: "rgba(120,120,120,0.22)",
+                  stroke: "rgb(60,60,60)",
+                  dash: true,
+                },
+              ],
+            },
+            cards,
+            notes,
+            inset,
+            alt:
+              "Nearest shared opportunities map, 11 by 8.5 inches: the parcel and the nearest " +
+              rows.length +
+              " coalition contributions numbered on aerial imagery, with a legend column giving each " +
+              "one's organisation, contact, score, date added, source layer, description and distance.",
+          },
+          { marginFraction: 0.14 }
+        );
+        if (p) {
+          p.insetUsed = !!inset;
+          // The same card again, as two-column rows, for the DOCX to print as
+          // real text under the image — see buildPrintDoc(). Word scales the
+          // landscape sheet into the text column and the legend's body type
+          // lands around 6.5 pt there; a table under it is the difference
+          // between a legend and a decoration.
+          p.legendRows = cards.map(c => [
+            c.n + ". " + c.lines[0].text,
+            c.lines
+              .slice(1)
+              .map(l => l.text)
+              .join(" · "),
+          ]);
+          plates.push(p);
+        }
+      }
+    } catch (e) {
+      console.warn("[report-maps] plate 3 failed:", e);
+      failures.push("sites");
     }
 
     return {
       figures,
-      plate,
+      plates,
+      // Kept: everything downstream that only ever wanted the first plate —
+      // and every caller written before there were three — still reads this.
+      plate: plates[0] || null,
       totalMs: Math.round(performance.now() - t0),
       failures,
     };
+  }
+
+  const fmtScore = v =>
+    v === null || v === undefined
+      ? "not recorded"
+      : Math.abs(v) >= 1000 || (Math.abs(v) < 0.001 && v !== 0)
+      ? v.toExponential(3)
+      : v.toFixed(v === Math.round(v) ? 0 : 4);
+
+  /**
+   * The legend card, when nobody handed us a formatter.
+   *
+   * js/parcel-report.js passes `opts.cardLines`, which is built from the same
+   * helpers the report's own card is built from — that is what stops the sheet
+   * and the list drifting apart. This is the fallback for a caller that did
+   * not, and it says less rather than saying something different.
+   */
+  function fallbackCardLines(r) {
+    const out = [{ text: r.organization || "Organization not recorded", style: "head" }];
+    if (r.contributor) out.push({ text: r.contributor, style: "body" });
+    if (r.description) out.push({ text: clip(r.description, CARD_DESC_MAX), style: "body" });
+    if (r.distanceMetres !== null && r.distanceMetres !== undefined) {
+      out.push({ text: r.distanceMetres.toLocaleString("en-US") + " m", style: "quiet" });
+    }
+    return out;
+  }
+
+  /** Cut at a word boundary, with an ellipsis, or leave it alone. */
+  function clip(s, n) {
+    const t = String(s).replace(/\s+/g, " ").trim();
+    if (t.length <= n) return t;
+    const cut = t.slice(0, n);
+    const sp = cut.lastIndexOf(" ");
+    return (sp > n * 0.6 ? cut.slice(0, sp) : cut).replace(/[,;:.\s]+$/, "") + "…";
+  }
+
+  /** The parcel's bounding-box width on the ground, in metres. */
+  function parcelGroundWidthM(facts) {
+    const rings = facts.parcelRings;
+    if (!rings || !rings.length) return null;
+    let xmin = Infinity, xmax = -Infinity, ymin = Infinity, ymax = -Infinity;
+    rings.forEach(r =>
+      r.forEach(([x, y]) => {
+        if (x < xmin) xmin = x;
+        if (x > xmax) xmax = x;
+        if (y < ymin) ymin = y;
+        if (y > ymax) ymax = y;
+      })
+    );
+    if (!isFinite(xmin)) return null;
+    return haversine((ymin + ymax) / 2, xmin, (ymin + ymax) / 2, xmax);
   }
 
   /** width / height of the parcel's bounding box, in ground units. */
@@ -1003,8 +1891,27 @@ window.NRPCReportMaps = (function () {
   return {
     buildAll,
     capture,
-    composePlate,
+    composeFurniture,
     // Exposed for tests and for the scale-bar verification.
-    _internals: { niceScaleMetres, parcelAspect, AERIAL_BASEMAP, ESRI_ATTRIB, DATA_ATTRIB },
+    _internals: {
+      niceScaleMetres,
+      parcelAspect,
+      parcelGroundWidthM,
+      haversine,
+      clip,
+      plateOneLegend,
+      plateTwoLegend,
+      AERIAL_BASEMAP,
+      ESRI_ATTRIB,
+      DATA_ATTRIB,
+      MODEL_BREAKS,
+      MODEL_FIELD,
+      METC_SIGNIFICANT,
+      METC_SENSITIVE,
+      MODEL_PARCEL,
+      ECO_FRAME_M,
+      CARD_DESC_MAX,
+      INSET_TRIGGER,
+    },
   };
 })();
