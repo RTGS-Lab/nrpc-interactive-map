@@ -76,6 +76,11 @@ window.NRPCReportMaps = (function () {
       "on the parcel": [255, 70, 70],
       "on an adjacent parcel": [255, 200, 40],
       nearby: [120, 220, 255],
+      // Only present when the report's widen-once pass fired: fewer than five
+      // contributions were in the normal scope, so the list reached further
+      // out to fill itself. Deliberately the dimmest of the four — it is the
+      // furthest thing on the map and the least about this parcel.
+      "wider search": [170, 170, 190],
     },
   };
 
@@ -83,6 +88,7 @@ window.NRPCReportMaps = (function () {
     "on the parcel": "On the parcel",
     "on an adjacent parcel": "On an adjacent parcel",
     nearby: "Nearby (within 250 m)",
+    "wider search": "Found by the wider search",
   };
 
   let modules = null;
@@ -181,6 +187,96 @@ window.NRPCReportMaps = (function () {
     return out;
   }
 
+  /** Every vertex of a polygon/polyline/point autocast object, flat. */
+  function verticesOf(geom) {
+    if (!geom) return [];
+    if (geom.type === "point") return [[geom.x, geom.y]];
+    const parts = geom.rings || geom.paths || [];
+    const out = [];
+    parts.forEach(part => part.forEach(v => out.push(v)));
+    return out;
+  }
+
+  /** The mean of a ring's vertices. Not a true centroid; a target to aim at. */
+  function meanPoint(geom) {
+    const vs = verticesOf(geom);
+    if (!vs.length) return null;
+    let sx = 0;
+    let sy = 0;
+    vs.forEach(v => {
+      sx += v[0];
+      sy += v[1];
+    });
+    return { x: sx / vs.length, y: sy / vs.length, spatialReference: { wkid: 4326 } };
+  }
+
+  /**
+   * Where a number goes for one contributed geometry: the vertex of it nearest
+   * the parcel.
+   *
+   * Two things forced this, both found by looking at the first version's
+   * output — where only the one POINT contribution got a number and the
+   * polygon and the three polylines got nothing at all:
+   *
+   *   - `geomFromEsriJson()` returns plain autocast JSON, not an esri geometry
+   *     instance, so `.centroid` and `.extent` are undefined on everything but
+   *     a point. Anything relying on them silently produced no label. The
+   *     arithmetic here needs neither, and works on exactly what is drawn;
+   *   - a contributed corridor can be kilometres long. Its centre lands
+   *     outside a frame built around the parcel and its neighbours, so the
+   *     number would be off the picture even once it existed. The nearest
+   *     vertex is by construction the end that is about THIS parcel, and it
+   *     is roughly where the row's distance was measured to.
+   *
+   * Nearest VERTEX, not nearest point on the nearest segment: the difference
+   * is metres on geometry that is already only a key into a list, and this
+   * needs no projection to get right.
+   */
+  function labelPoint(geom, toward) {
+    if (!geom) return null;
+    if (geom.type === "point") return geom;
+    const vs = verticesOf(geom);
+    if (!vs.length) return null;
+    const t = toward || meanPoint(geom);
+    if (!t) return null;
+    // Latitude-corrected so "nearest" means nearest on the ground, not
+    // nearest in degrees, which at 45 N is 1.4× wrong in x.
+    const kx = Math.cos((t.y * Math.PI) / 180);
+    let best = null;
+    let bestD = Infinity;
+    vs.forEach(v => {
+      const dx = (v[0] - t.x) * kx;
+      const dy = v[1] - t.y;
+      const d = dx * dx + dy * dy;
+      if (d < bestD) {
+        bestD = d;
+        best = v;
+      }
+    });
+    return best ? { type: "point", x: best[0], y: best[1], spatialReference: { wkid: 4326 } } : null;
+  }
+
+  // Two contributions 5 m and 7 m from the same parcel boundary put their
+  // numbers on top of each other — measured on PID 2411921110001, where rows
+  // 2 and 3 printed as one illegible blob. Anything whose label lands within
+  // this many metres of one already placed is pushed up the screen by a fixed
+  // number of points, so a cluster reads as a stack.
+  //
+  // Metres, not pixels, because the label is placed before the camera's extent
+  // is known. The figures frame a parcel and its neighbours — a few hundred
+  // metres across 1,600 px — so 20 m is comfortably tens of pixels at the
+  // scales this map is ever drawn at.
+  const LABEL_CLUSTER_M = 20;
+  const LABEL_STACK_PT = 15;
+
+  /** Metres between two 4326 points, flat-earth — a declutter test, not a measurement. */
+  function labelGapM(a, b) {
+    const mPerDeg = 111320;
+    const dx = (a.x - b.x) * mPerDeg * Math.cos((a.y * Math.PI) / 180);
+    const dy = (a.y - b.y) * mPerDeg;
+    return Math.sqrt(dx * dx + dy * dy);
+  }
+
   function tierSymbol(relation, geometryType) {
     const rgb = SYM.tier[relation] || [200, 200, 200];
     if (geometryType === "polyline") {
@@ -259,12 +355,63 @@ window.NRPCReportMaps = (function () {
     frameOn.push(parcelGr);
 
     if (kind === "opportunity" || kind === "plate") {
+      // Two passes, because a number drawn under a later polygon's fill is a
+      // number nobody can read: every shape first, then every label on top.
+      const labelled = [];
       (mg.features || []).forEach(f => {
         const geom = geomFromEsriJson(f.geometry);
         if (!geom) return;
         // Drawn, but not framed on — see frameOn above.
         g.push(new m.Graphic({ geometry: geom, symbol: scaleWidths(tierSymbol(f.relation, geom.type), k) }));
+        if (f.nearestRank) labelled.push({ f, geom });
       });
+      // The numbered ones ARE framed on — as single points, not as their full
+      // extents, which is what keeps the "corridor swallows the frame" problem
+      // above from coming back. A number the reader cannot find is worse than
+      // a slightly wider picture.
+      //
+      // Rows the widen-once pass added are excluded: they can be 1,000 m out,
+      // and framing on them would shrink the parcel to the sliver this
+      // deliberately avoids. Their number may therefore fall off the figure —
+      // the caption says so.
+      // The five the report lists, numbered 1-5 to match it. Without this the
+      // figure and the list are two separate arguments about the same parcel
+      // and the reader has to join them on distance.
+      const toward = meanPoint(parcel);
+      const placed = [];
+      labelled
+        .sort((a, b) => a.f.nearestRank - b.f.nearestRank)
+        .forEach(({ f, geom }) => {
+          const at = labelPoint(geom, toward);
+          if (!at) return;
+          // Stack, rather than overprint, when two land on the same spot.
+          const clash = placed.filter(p => labelGapM(p, at) < LABEL_CLUSTER_M).length;
+          placed.push({ x: at.x, y: at.y });
+          if (f.relation !== "wider search") {
+            frameOn.push(new m.Graphic({ geometry: at }));
+          }
+          const rgb = SYM.tier[f.relation] || [200, 200, 200];
+          g.push(
+            new m.Graphic({
+              geometry: at,
+              symbol: {
+                type: "text",
+                text: String(f.nearestRank),
+                color: [15, 15, 15, 1],
+                // A white disc ringed in the tier's own colour: the number has
+                // to read over dark water and over its own fill, and the ring
+                // is what ties it back to the legend.
+                backgroundColor: [255, 255, 255, 0.92],
+                borderLineColor: [...rgb, 1],
+                borderLineSize: Math.max(1, 1.5 * k),
+                haloColor: [255, 255, 255, 0.9],
+                haloSize: Math.max(1, 1.5 * k),
+                font: { size: Math.round(15 * k), weight: "bold", family: "sans-serif" },
+                yoffset: Math.round((clash * LABEL_STACK_PT + 4) * k),
+              },
+            })
+          );
+        });
     }
 
     return { graphics: g, frameOn, parcel, ring };
@@ -360,15 +507,31 @@ window.NRPCReportMaps = (function () {
     }
   }
 
-  /** Resolve when the view stops updating, or when the clock runs out. */
+  // After `updating` goes false there is still an animation to sit through:
+  // ArcGIS fades newly added graphics in over roughly a quarter of a second,
+  // and `updating` describes the DATA, not the paint.
+  //
+  // Two requestAnimationFrames used to be the whole wait, and it was enough
+  // whenever frames were arriving at 60 Hz. It is not enough when they are
+  // not. Caught on 2026-08-27: the sample export's Figure 3 came out of a
+  // headless Chrome run as bare aerial imagery with the parcel outline, the
+  // contribution shapes and the five numbers all painted at a few per cent
+  // opacity — every graphic present, mid-fade, captured. The same code in a
+  // normal tab drew them solid.
+  //
+  // 400 ms of real time, and the frame pair after it. Four captures, so this
+  // costs an export about 1.6 s; a figure that argues nothing costs more.
+  const SETTLE_MS = 400;
+
+  /** Resolve when the view stops updating AND has had time to paint. */
   function whenStable(view, timeoutMs) {
     return new Promise(resolve => {
       let handle = null;
       const done = () => {
         if (handle) handle.remove();
+        handle = null;
         clearTimeout(timer);
-        // One more frame so the last tile is composited before the capture.
-        requestAnimationFrame(() => requestAnimationFrame(resolve));
+        setTimeout(() => requestAnimationFrame(() => requestAnimationFrame(resolve)), SETTLE_MS);
       };
       const timer = setTimeout(done, timeoutMs);
       if (!view.updating) return done();
@@ -731,8 +894,17 @@ window.NRPCReportMaps = (function () {
           const o = facts.sharedOpportunities;
           if (!o) return "No shared-opportunity data was available for this parcel.";
           const pids = (o.adjacency && o.adjacency.pids) || [];
+          const ranked = (o.nearest || []).length;
+          const wide = (o.nearest || []).filter(r => r.relation === "wider search").length;
           return (
             `Contributions coloured by tier, with the parcels touching this one shown dashed. ` +
+            (ranked
+              ? `The numbered ones are the ${ranked} the list above prints, in the same order, each number ` +
+                `sitting at the point of the contribution nearest this parcel. ` +
+                (wide
+                  ? `${wide} of them came from the wider search and may lie outside this frame. `
+                  : "")
+              : "") +
             `${o.onParcelCount} on the parcel, ${o.onAdjacentCount} on an adjacent parcel, ` +
             `${o.nearbyCount} nearby. ` +
             (pids.length

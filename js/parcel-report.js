@@ -233,6 +233,97 @@
     connection: ["connection_needs", "rate_priority", "rate_feasibility"],
   };
 
+  // ── The five card fields, and what the data actually has ─────────────────
+  //
+  // Field audit against the live `?f=json` metadata of all five layers AND all
+  // 232 records, 2026-08-27. Bryan asked each card to carry organisation,
+  // contact name, contact email, assigned score and date added. Three of those
+  // are in the data clean, one is in the data with a caveat, and one is not
+  // there at all:
+  //
+  //   organisation   `organization`   present. 156/162, 17/21, 46/49 non-null.
+  //   contact name   `name`           present. 144/162, 17/21, 48/49 non-null.
+  //   contact email  —                NOT PUBLISHED BY ANY OF THE FIVE LAYERS,
+  //                                   and a regex sweep for an address across
+  //                                   every string value of all 232 rows found
+  //                                   zero — it is not hiding in the prose
+  //                                   either. Asking for it anyway is not an
+  //                                   option: these services reject the WHOLE
+  //                                   query with "'outFields' parameter is
+  //                                   invalid" when outFields names a field the
+  //                                   layer does not have, so a speculative
+  //                                   `email` in OPP_COMMON_FIELDS would take
+  //                                   the entire section down. The card prints
+  //                                   "not recorded" and the section says why
+  //                                   once, under the list.
+  //   assigned score OPP_SCORE_FIELD  present, but it is a DIFFERENT question
+  //                                   per schema and one of them runs backwards.
+  //   date added     `CreationDate`   present, but for most rows it is when the
+  //                                   workshop CSV was loaded — OPP_BULK_LOAD_MS.
+  //
+  // To turn the email on the day NRPC adds it to the Contribute form: put the
+  // field name in OPP_EMAIL_FIELD and add it to OPP_COMMON_FIELDS, once every
+  // layer publishes it. Nothing else changes.
+  const OPP_EMAIL_FIELD = null;
+
+  // The one numeric rating each schema publishes, which is what the card calls
+  // the assigned score. They are not the same question and they do not run the
+  // same way, so the scale is printed with the number every time:
+  //
+  //   easy_start     Integer 1-5, "1: very easy, 5: very hard" — INVERTED, the
+  //                  1 is the good end. Over the 148 rows that have one:
+  //                  1×19, 2×38, 3×56, 4×22, 5×13.
+  //   rate_priority  Integer 1-5, "1: low, 5: high".
+  //
+  // `rate_feasibility` is the connection layers' other rating and stays in the
+  // detail line: the polygon layer publishes it as a String and the polyline
+  // layer as an Integer — same question, two published types — which is
+  // exactly why it is not where a headline number comes from.
+  // `rowKey` is the same rating's name in OPP_DETAIL_LABELS: the card promotes
+  // it to its own line, so the detail line drops it rather than printing the
+  // number twice in two phrasings.
+  const OPP_SCORE_FIELD = {
+    opportunity: {
+      field: "easy_start",
+      rowKey: "easeOfStart",
+      label: "Ease of starting",
+      scale: "1 easy – 5 hard",
+    },
+    connection: {
+      field: "rate_priority",
+      rowKey: "priorityRating",
+      label: "Priority",
+      scale: "1 low – 5 high",
+    },
+  };
+
+  // CreationDate is real editor tracking, but it is not when someone drew the
+  // thing. Measured 2026-08-27 over all 232 rows: one CreationDate value per
+  // workshop layer is shared by the majority of that layer's features —
+  // 129/162, 20/21 and 49/49 — because that is when the workshop's CSV was
+  // bulk-loaded into ArcGIS Online. Every other CreationDate in the data is
+  // unique to a single row and is a genuine per-contribution timestamp (33 of
+  // them on Activity 1, running 30 Apr to 11 Sep 2025).
+  //
+  // A card reading "Added 2025-04-28" on 129 contributions that were drawn on
+  // paper at a workshop in January is a true field telling a small lie, so the
+  // rows matching a load stamp say so. A value not in this table is treated as
+  // genuine — which is how a contribution arriving through the Contribute
+  // panel tomorrow gets treated, with no code change.
+  const OPP_BULK_LOAD_MS = {
+    workshop1: 1745849740936,
+    workshop2physical: 1745849990952,
+    workshop2thematic: 1745849990890,
+  };
+
+  // Bryan, 27 Aug: "it should show the top 5 nearest, sorted by distance."
+  const OPP_NEAREST_N = 5;
+  // …and Design 2's widen-once: if fewer than five contributions are in the
+  // normal tiered scope, ONE further pass at this radius, said out loud in a
+  // note. Only fires on a parcel that is short of five, which is nearly all of
+  // them — see the note in the write-up on what it costs.
+  const OPP_WIDEN_M = 1000;
+
   // What each extra field is called in the report, in the order it reads best.
   const OPP_DETAIL_LABELS = [
     ["feasibleInThreeYears", "Feasible in 3 years"],
@@ -826,10 +917,22 @@
     return isNaN(d.getTime()) ? null : d.toISOString().slice(0, 10);
   }
 
+  // The assigned score, as {label, value, scale} or null — the schema's one
+  // numeric rating, carried with its scale because the two schemas' scales run
+  // in opposite directions. See OPP_SCORE_FIELD.
+  function opportunityScore(layer, a) {
+    const spec = OPP_SCORE_FIELD[layer.schema];
+    if (!spec) return null;
+    const v = num(a[spec.field]);
+    if (v === null) return null;
+    return { label: spec.label, value: v, outOf: 5, scale: spec.scale, rowKey: spec.rowKey };
+  }
+
   // One contributed feature, in the shape the panel, the print view and the
   // model payload all read from.
   function opportunityRow(layer, attrs, relation, distanceMetres) {
     const a = attrs || {};
+    const created = a.CreationDate;
     return {
       id: layer.key + ":" + a.OBJECTID,
       type: layer.label,
@@ -839,6 +942,18 @@
       // Kept for the panel and the printed page. Stripped from the API
       // payload — see stripOpportunityContributors().
       contributor: clean(a.name),
+      // Not published by any of the five layers as of 2026-08-27 — see the
+      // audit note on OPP_EMAIL_FIELD. Null here means the card prints
+      // "not recorded", which is the whole point: never invented.
+      contactEmail: OPP_EMAIL_FIELD ? clean(a[OPP_EMAIL_FIELD]) : null,
+      score: opportunityScore(layer, a),
+      // True when this row's CreationDate is the layer's bulk-load stamp
+      // rather than a moment anyone typed anything. See OPP_BULK_LOAD_MS.
+      dateAddedIsBulkLoad:
+        created !== null &&
+        created !== undefined &&
+        OPP_BULK_LOAD_MS[layer.key] !== undefined &&
+        Number(created) === OPP_BULK_LOAD_MS[layer.key],
       description: clean(a.describe_opportunity),
       feasibleInThreeYears: clean(a.three_years),
       easeOfStart: num(a.easy_start),
@@ -864,7 +979,11 @@
   const ON_PARCEL = "on the parcel";
   const ON_ADJACENT = "on an adjacent parcel";
   const NEARBY = "nearby";
-  const TIER_RANK = { [ON_PARCEL]: 0, [ON_ADJACENT]: 1, [NEARBY]: 2 };
+  // A fourth relation, and NOT a fourth tier: nothing reaches it through the
+  // normal path. It exists only on rows the widen-once pass pulled in when
+  // fewer than five contributions were in scope, and only inside `nearest`.
+  const WIDER = "wider search";
+  const TIER_RANK = { [ON_PARCEL]: 0, [ON_ADJACENT]: 1, [NEARBY]: 2, [WIDER]: 3 };
 
   /**
    * What coalition members have put on the map on, beside, or near this parcel.
@@ -994,6 +1113,9 @@
     };
 
     const all = [];
+    // Rows the widen-once pass added. Kept out of `all` on purpose — see the
+    // comment where they are filled — but they still need geometry on the map.
+    let widenRows = [];
     let dropped = 0;
     const tierStart = Date.now();
     results.forEach(r => {
@@ -1032,7 +1154,109 @@
 
     const count = tier => all.filter(r => r.relation === tier).length;
 
+    // ── The five nearest ───────────────────────────────────────────────────
+    //
+    // What the section prints. `all` keeps its old order and its old contents
+    // — the counts, the map and the model payload are all still built from it,
+    // untouched — and this is a view over it, sorted purely by distance,
+    // because "top 5 nearest, sorted by distance" was the ask and tier order
+    // is not distance order: an on-adjacent contribution can be 1,140 m out
+    // while a nearby one is 84 m.
+    const byDistance = (a, b) =>
+      (a.distanceMetres ?? 1e9) - (b.distanceMetres ?? 1e9) ||
+      (TIER_RANK[a.relation] ?? 9) - (TIER_RANK[b.relation] ?? 9) ||
+      String(a.id).localeCompare(String(b.id));
+
+    let nearest = all.slice().sort(byDistance).slice(0, OPP_NEAREST_N);
+    let widen = null;
+
+    // Widen once. Most parcels in the county have nothing within 250 m, and a
+    // section headed "Nearest (5)" that prints one line is a worse answer than
+    // one that says "nothing within 250 m; here is what is within 1,000 m".
+    // ONE extra pass, at a radius the note names, and never a second.
+    if (nearest.length < OPP_NEAREST_N && !results.every(r => r.error)) {
+      const seen = new Set(all.map(r => r.id));
+      const widenStart = Date.now();
+      const found = [];
+      const failed = [];
+      await Promise.all(
+        results.map(async r => {
+          if (r.error) {
+            failed.push(r.layer.label);
+            return;
+          }
+          try {
+            const json = await esriQuery(
+              r.layer.url,
+              {
+                geometry,
+                geometryType: "esriGeometryPolygon",
+                inSR: "4326",
+                spatialRel: "esriSpatialRelIntersects",
+                outFields: OPP_COMMON_FIELDS.concat(OPP_SCHEMA_FIELDS[r.layer.schema]).join(","),
+                resultRecordCount: "25",
+                distance: String(OPP_WIDEN_M),
+                units: "esriSRUnit_Meter",
+                returnGeometry: "true",
+                outSR: "4326",
+              },
+              OPP_TIMEOUT_MS
+            );
+            (json.features || []).forEach(f => {
+              const id = r.layer.key + ":" + f.attributes.OBJECTID;
+              if (seen.has(id)) return;
+              const raw = minDistanceM(f.geometry, parcelGeometry, lat0);
+              if (raw === null || raw > OPP_WIDEN_M) return;
+              const row = opportunityRow(r.layer, f.attributes, WIDER, Math.round(raw));
+              found.push(row);
+              if (f.geometry) r.geomById.set(f.attributes.OBJECTID, f.geometry);
+            });
+          } catch (e) {
+            failed.push(r.layer.label);
+          }
+        })
+      );
+      found.sort(byDistance);
+      const take = found.slice(0, OPP_NEAREST_N - nearest.length);
+      widen = {
+        radiusMetres: OPP_WIDEN_M,
+        inScopeBefore: nearest.length,
+        added: take.length,
+        foundBeyondScope: found.length,
+        stillShort: nearest.length + take.length < OPP_NEAREST_N,
+        unreachable: failed,
+        ms: Date.now() - widenStart,
+      };
+      // The widened rows go into `nearest` and into the map's geometry index,
+      // and NOWHERE else. `all` — and with it every count, the prompt payload
+      // and the "within 250 m" arithmetic — means exactly what it meant
+      // before this pass existed.
+      //
+      // Re-sorted, not appended. Appending looked right until Golden Valley
+      // ran: its two in-scope rows sit on an adjacent parcel at 567 m and
+      // 1,140 m, and the widened row is at 417 m — nearer than both. A list
+      // headed "sorted by distance" that printed 567, 1,140, 417 would be
+      // wrong on its own terms. Ties fall back to tier, so an in-scope row
+      // still wins an exact draw against a widened one.
+      widenRows = take;
+      nearest = nearest.concat(take).sort(byDistance);
+    }
+    stageTimings.widen = widen ? { ms: widen.ms } : null;
+    nearest.forEach((r, i) => {
+      // 1-based, and the same number the adjacency figure draws on the map.
+      r.nearestRank = i + 1;
+    });
+
     return {
+      // The five the section prints, distance-ascending. A view over `items`
+      // plus, when the widen pass fired, up to five rows from beyond the
+      // tiers. Read by the panel, the print view and the figure's numbering.
+      nearest,
+      nearestLimit: OPP_NEAREST_N,
+      widen,
+      // Bryan, 27 Aug: contact email is not published by any of the five
+      // layers, so the cards say "not recorded" and the section says this once.
+      contactEmailAvailable: !!OPP_EMAIL_FIELD,
       // Kept under the old name: it is what "nearby" still means, and the
       // panel, the print view and the prompt all read it.
       bufferMetres: NEARBY_M,
@@ -1081,6 +1305,7 @@
             r.geomById.forEach((g, oid) => index.set(r.layer.key + ":" + oid, { g, layer: r.layer }));
           });
           return all
+            .concat(widenRows)
             .map(row => {
               const hit = index.get(row.id);
               if (!hit) return null;
@@ -1091,6 +1316,10 @@
                 geometry: hit.g,
                 organization: row.organization,
                 adjacentParcelPid: row.adjacentParcelPid || null,
+                // 1-5 on the five the list prints, null on everything else.
+                // js/report-maps.js draws this number on the figure so the
+                // map and the list can be read against each other.
+                nearestRank: row.nearestRank || null,
               };
             })
             .filter(Boolean);
@@ -1115,11 +1344,18 @@
   // organization is the actionable field for a brief; the individual is not,
   // so they go to the panel and the printed page but never to the model —
   // the same call the owner-name fields already make.
+  //
+  // Bryan, 2026-08-27, deciding this deliberately when the contact fields went
+  // onto the cards: "do not put the names and emails into the prompt sent to
+  // Claude. ONLY IN THE REPORT and PARCEL SUMMARY." So the panel, the mobile
+  // sheet, the PDF and the DOCX carry contact name and email; this function
+  // and compactOpportunities()'s whitelist are the two places that keep them
+  // out of the request, and both are belt and braces on purpose.
   function stripOpportunityContributors(opps) {
     if (!opps) return opps;
     return {
       ...opps,
-      items: opps.items.map(({ contributor, ...rest }) => rest),
+      items: opps.items.map(({ contributor, contactEmail, ...rest }) => rest),
       contributorNamesWithheld:
         "Names of the individuals who contributed each opportunity were withheld from this request.",
     };
@@ -1316,6 +1552,14 @@
   // The panel and the printed page can afford every field of every
   // contribution. The prompt cannot, and does not need to: what the model has
   // to write a paragraph is who, what, how far, and whether it is live.
+  //
+  // FROZEN, deliberately, per Bryan 2026-08-27: the contact name and email the
+  // cards now print are the ORGANISATION's to share internally, not the
+  // model's to see. `contributor` and `contactEmail` are absent from the
+  // whitelist below and stripped again by stripOpportunityContributors(); the
+  // `nearest` view and its widened rows are absent too, so this payload is
+  // byte-for-byte what it was before the five-nearest work. Do not "tidy" this
+  // by spreading the row.
   const OPP_PROMPT_LIMIT = 12;
   const OPP_DESCRIPTION_CHARS = 400;
 
@@ -1659,40 +1903,250 @@
       const who = r.adjacentParcelPid ? `on adjacent parcel ${r.adjacentParcelPid}` : ON_ADJACENT;
       return d ? `${who} · ${d}` : who;
     }
+    // The widen-once rows say which search found them, because "84 m" and
+    // "780 m" being in one list is otherwise a puzzle.
+    if (r.relation === WIDER) return d ? `${d} — wider search` : "wider search";
     return d ? `nearby · ${d}` : "nearby";
   }
 
-  // The detail lines under a contribution's description — only the fields
-  // that layer's schema actually filled in.
-  function opportunityDetails(r) {
-    return OPP_DETAIL_LABELS.map(([key, label]) => [label, r[key]]).filter(
-      ([, v]) => v !== null && v !== undefined && v !== ""
+  // The one line under the list that explains the widen, when it fired.
+  function widenNote(opps) {
+    const w = opps && opps.widen;
+    if (!w) return null;
+    if (!w.added) {
+      return (
+        `Fewer than ${opps.nearestLimit} contributions are on this parcel, on a parcel touching it, or within ` +
+        `${opps.bufferMetres} m, so the search was widened once to ${w.radiusMetres.toLocaleString("en-US")} m — ` +
+        `and found nothing more. The list above is everything there is.`
+      );
+    }
+    return (
+      `Only ${w.inScopeBefore} contribution${w.inScopeBefore === 1 ? " is" : "s are"} on this parcel, on a parcel ` +
+      `touching it, or within ${opps.bufferMetres} m, so the search was widened once to ` +
+      `${w.radiusMetres.toLocaleString("en-US")} m to fill the list. The ${w.added} row${
+        w.added === 1 ? "" : "s"
+      } marked "wider search" ${w.added === 1 ? "is" : "are"} further out than this report's usual scope, and ` +
+      `${w.added === 1 ? "is" : "are"} counted nowhere else in it.` +
+      (w.stillShort ? ` Even at ${w.radiusMetres.toLocaleString("en-US")} m there are fewer than ${opps.nearestLimit}.` : "") +
+      (w.unreachable.length ? ` Not reached on the wider pass: ${w.unreachable.join(", ")}.` : "")
     );
   }
 
-  // The panel's own block: a card per contribution, on-parcel ones first.
-  // The panel is 400 px wide, so it shows the first PANEL_OPP_LIMIT and points
-  // at the PDF for the rest rather than becoming a scroll of its own.
+  // Said once per section rather than once per card: why every email line
+  // reads "not recorded". Bryan asked for the email; the schema has no such
+  // field, and the report says so rather than leaving a reader wondering
+  // whether it is a bug.
+  function contactEmailNote(opps) {
+    if (!opps || opps.contactEmailAvailable) return null;
+    return (
+      "No contact email is shown because none of the five NRPC contribution layers publishes one — " +
+      "not the Contribute form, not the workshop forms. The contributor's name and organisation are " +
+      "what the record carries. Adding an email question to the Contribute form is a change in ArcGIS " +
+      "Online, not in this report."
+    );
+  }
+
+  // ── The card's five requested fields ─────────────────────────────────────
   //
-  // These three numbers are the answer to "make sure it doesn't include too
-  // much". Widening the search to whole adjacent parcels could have made this
-  // section grow without limit; instead the tiers throw away everything that
-  // is neither on a touching parcel nor within 250 m, and these cap what
-  // survives that.
-  const PANEL_OPP_LIMIT = 12;
-  const PRINT_OPP_LIMIT = 50;
+  // Bryan, 27 Aug: "Be sure to provide the org, contact name, and email of the
+  // partner opportunity (and their assigned score, and date it was added -
+  // this data is all for internal coalition members, so they know it's going
+  // to be shared this way)."
+  //
+  // Every one of these renders SOMETHING on every card. A blank line is
+  // indistinguishable from a field nobody thought to add, and this report's
+  // job is to be actionable: "email not recorded" sends someone to look the
+  // address up, an absent line sends them nowhere.
+
+  const NOT_RECORDED = "not recorded";
+
+  function opportunityOrgText(r) {
+    return r.organization || "Organization " + NOT_RECORDED;
+  }
+
+  // "Karen Galles · karen.galles@hennepin.us" — or what is missing, by name.
+  // The email half is `null` on every row today: see OPP_EMAIL_FIELD.
+  function opportunityContactParts(r) {
+    return {
+      name: r.contributor || "Contact name " + NOT_RECORDED,
+      hasName: !!r.contributor,
+      email: r.contactEmail || "Email " + NOT_RECORDED,
+      hasEmail: !!r.contactEmail,
+    };
+  }
+
+  // "Priority 4 of 5 (1 low – 5 high)". The scale rides with the number
+  // because the two schemas' scales point in opposite directions and a bare
+  // "4" from one layer means the opposite of a "4" from the other.
+  function opportunityScoreText(r) {
+    const s = r.score;
+    if (!s || s.value === null || s.value === undefined) return "Score " + NOT_RECORDED;
+    return `${s.label} ${s.value} of ${s.outOf} (${s.scale})`;
+  }
+
+  // "Added 2025-09-11", or "Added 2025-04-28 · layer load date" when the stamp
+  // is the workshop bulk load. The caveat is three words on the card and a
+  // sentence once under the list — repeating the full explanation on five
+  // cards buries the four dates that are real.
+  function opportunityAddedText(r) {
+    if (!r.contributedOn) return "Date added " + NOT_RECORDED;
+    return "Added " + r.contributedOn + (r.dateAddedIsBulkLoad ? " · layer load date" : "");
+  }
+
+  // Said once per section, and only when a card is actually carrying the
+  // caveat: what "layer load date" means.
+  function bulkLoadNote(opps) {
+    const rows = (opps && opps.nearest) || [];
+    if (!rows.some(r => r.dateAddedIsBulkLoad)) return null;
+    const n = rows.filter(r => r.dateAddedIsBulkLoad).length;
+    return (
+      `"Layer load date" on ${n} of the ${rows.length}: that contribution's CreationDate is the day its ` +
+      `Winter Workshop layer was bulk-loaded into ArcGIS Online, shared with most of the rows in that ` +
+      `layer — not the day anyone drew or typed it. The workshop itself was held earlier. Dates without ` +
+      `the marker are that contribution's own.`
+    );
+  }
+
+  // The detail lines under a contribution's description — only the fields
+  // that layer's schema actually filled in, minus the one rating the card has
+  // already promoted to its own "assigned score" line. Printing "Priority
+  // 2 of 5" above and "Priority (1 low – 5 high): 2" three lines below reads
+  // as two different facts.
+  function opportunityDetails(r) {
+    const promoted = r.score && r.score.rowKey;
+    return OPP_DETAIL_LABELS.filter(([key]) => key !== promoted)
+      .map(([key, label]) => [label, r[key]])
+      .filter(([, v]) => v !== null && v !== undefined && v !== "");
+  }
+
+  // The panel's own block: one card per contribution in the five nearest.
+  //
+  // It used to print up to twelve, tier-ordered. Bryan, 27 Aug: "it should show
+  // the top 5 nearest, sorted by distance." So the list is opps.nearest — five
+  // rows, distance-ascending — and what the search found beyond them is a
+  // count in a note rather than fourteen more cards. The old PANEL_OPP_LIMIT
+  // (12) and PRINT_OPP_LIMIT (50) are gone with it: OPP_NEAREST_N is now the
+  // only number that decides how long this section is, in the panel and on
+  // paper alike.
+  //
+  // What this costs, and it is a real cost: the PDF no longer carries every
+  // contribution it found. On the densest parcel tested that is 5 printed of
+  // 5 found, so nothing is lost today — but a parcel in a cluster will show
+  // five cards and a line saying how many more the map draws. One constant
+  // reverses it if Bryan wants the long list on paper.
+
+  // The eight lines of a card, in the order Bryan asked for them: org, contact
+  // name, email, assigned score, date added, source layer, description,
+  // distance. Panel and print build the same card from this one function so
+  // they cannot drift; `p` is the class prefix ("pr-opp" or "pr-opp-print").
+  //
+  // The first five are the fields this round added. They are always rendered,
+  // even when the answer is "not recorded" — see the NOT_RECORDED comment.
+  function opportunityCardLines(r, p, opts) {
+    const linkEmail = !!(opts && opts.linkEmail);
+    const c = opportunityContactParts(r);
+    const lines = [];
+
+    // 1. org — and the rank, so the card and the numbered figure agree.
+    lines.push(
+      el("div", { className: p + "-head" },
+        el("span", {
+          className: p + "-org",
+          textContent: (r.nearestRank ? r.nearestRank + ". " : "") + opportunityOrgText(r),
+        })
+      )
+    );
+
+    // 2 + 3. contact name, then email. One line: they are one fact.
+    const contact = el("div", { className: p + "-field " + p + "-contact" });
+    contact.append(
+      el("span", {
+        // "" not null: el() Object.assigns props straight onto the node, and
+        // a null className lands as the literal string "null".
+        className: c.hasName ? "" : p + "-missing",
+        textContent: c.name,
+      }),
+      el("span", { textContent: " · " })
+    );
+    if (c.hasEmail && linkEmail) {
+      contact.append(el("a", { href: "mailto:" + c.email, textContent: c.email }));
+    } else {
+      contact.append(
+        el("span", { className: c.hasEmail ? "" : p + "-missing", textContent: c.email })
+      );
+    }
+    lines.push(contact);
+
+    // 4. the assigned score, with its scale.
+    lines.push(
+      el("div", {
+        className: p + "-field " + p + "-score" + (r.score ? "" : " " + p + "-missing"),
+        textContent: opportunityScoreText(r),
+      })
+    );
+
+    // 5. date added, with the bulk-load caveat when it applies.
+    lines.push(
+      el("div", {
+        className: p + "-field " + p + "-added" + (r.contributedOn ? "" : " " + p + "-missing"),
+        textContent: opportunityAddedText(r),
+      })
+    );
+
+    // 6. source layer — the only type distinction the data carries.
+    lines.push(el("div", { className: p + "-type", textContent: r.type + " · " + r.source }));
+
+    // 7. description.
+    lines.push(
+      el("div", {
+        className: p + "-desc" + (r.description ? "" : " " + p + "-missing"),
+        textContent: r.description || "Description " + NOT_RECORDED,
+      })
+    );
+
+    // The rest of the survey answers, unchanged — under the description, where
+    // they were, because they are detail and the eight fields above are not.
+    const details = opportunityDetails(r);
+    if (details.length) {
+      lines.push(
+        el("div", {
+          className: p + "-meta",
+          textContent: details.map(([k, v]) => `${k}: ${v}`).join(" · "),
+        })
+      );
+    }
+
+    // 8. distance, last, as the ask ordered it.
+    lines.push(
+      el("div", { className: p + "-field " + p + "-whereline" },
+        el("span", {
+          className:
+            p + "-where" +
+            (r.relation === ON_PARCEL ? " pr-opp-on" : "") +
+            (r.relation === ON_ADJACENT ? " pr-opp-adj" : "") +
+            (r.relation === WIDER ? " pr-opp-wide" : ""),
+          textContent: opportunityWhere(r),
+        })
+      )
+    );
+    return lines;
+  }
 
   function opportunityPanelBlock(opps, bufferM) {
     const box = el("div", { className: "pr-opps" });
     const searched = adjacencyWorked(opps) ? opps.adjacency.parcelsSearched : 0;
+    const n = opps && opps.nearest ? opps.nearest.length : 0;
     box.append(
       el("div", { className: "pr-opps-head" },
-        el("span", { className: "pr-opps-title", textContent: "Shared opportunities" }),
+        el("span", {
+          className: "pr-opps-title",
+          textContent: "Shared opportunities — nearest " + (n || OPP_NEAREST_N),
+        }),
         el("span", {
           className: "pr-opps-sub",
           textContent: searched
-            ? `NRPC coalition contributions on this parcel, on the ${searched} touching it, or within ${bufferM} m`
-            : `NRPC coalition contributions within ${bufferM} m`,
+            ? `The closest NRPC coalition contributions on this parcel, on the ${searched} touching it, or within ${bufferM} m`
+            : `The closest NRPC coalition contributions within ${bufferM} m`,
         })
       )
     );
@@ -1708,53 +2162,42 @@
       return box;
     }
 
-    if (!opps.items.length) {
+    if (!n) {
       box.append(el("div", { className: "pr-opps-empty", textContent: opportunityEmptyText(opps) }));
     } else {
       const list = el("ul", { className: "pr-opp-list" });
-      opps.items.slice(0, PANEL_OPP_LIMIT).forEach(r => {
+      opps.nearest.forEach(r => {
         const li = el("li", { className: "pr-opp" });
-        li.append(
-          el("div", { className: "pr-opp-top" },
-            el("span", {
-              className: "pr-opp-org",
-              textContent: r.organization || "Organization not given",
-            }),
-            el("span", {
-              className:
-                "pr-opp-where" +
-                (r.relation === ON_PARCEL ? " pr-opp-on" : "") +
-                (r.relation === ON_ADJACENT ? " pr-opp-adj" : ""),
-              textContent: opportunityWhere(r),
-            })
-          ),
-          el("div", { className: "pr-opp-type", textContent: r.type })
-        );
-        if (r.description) {
-          li.append(el("div", { className: "pr-opp-desc", textContent: r.description }));
-        }
-        const details = opportunityDetails(r);
-        if (details.length) {
-          li.append(
-            el("div", {
-              className: "pr-opp-meta",
-              textContent: details.map(([k, v]) => `${k}: ${v}`).join(" · "),
-            })
-          );
-        }
-        const by = [r.contributor, r.contributedOn].filter(Boolean).join(" · ");
-        if (by) li.append(el("div", { className: "pr-opp-by", textContent: by }));
+        // mailto: in the panel, plain text on paper — a link a reader can
+        // click is worth having where clicking is possible.
+        opportunityCardLines(r, "pr-opp", { linkEmail: true }).forEach(node => li.append(node));
         list.append(li);
       });
       box.append(list);
-      if (opps.items.length > PANEL_OPP_LIMIT) {
+      const beyond = opps.items.length - opps.nearest.filter(r => r.relation !== WIDER).length;
+      if (beyond > 0) {
         box.append(
           el("div", {
-            className: "pr-opps-empty",
-            textContent: `+ ${opps.items.length - PANEL_OPP_LIMIT} more — all of them are on the PDF.`,
+            className: "pr-opps-note",
+            textContent:
+              `${beyond} further contribution${beyond === 1 ? " is" : "s are"} in scope and not listed — ` +
+              `this is the nearest ${opps.nearest.length}. All of them are drawn on the map.`,
           })
         );
       }
+    }
+
+    const widenLine = widenNote(opps);
+    if (widenLine) {
+      box.append(el("div", { className: "pr-opps-note", textContent: widenLine }));
+    }
+    const bulkLine = bulkLoadNote(opps);
+    if (bulkLine) {
+      box.append(el("div", { className: "pr-opps-note", textContent: bulkLine }));
+    }
+    const emailLine = contactEmailNote(opps);
+    if (emailLine && n) {
+      box.append(el("div", { className: "pr-opps-note", textContent: emailLine }));
     }
 
     // How wide the search went and what it discarded. Worth one line whether
@@ -2035,7 +2478,7 @@
             "section is unknown rather than empty.",
         })
       );
-    } else if (!opps.items.length) {
+    } else if (!opps.nearest.length) {
       oppSection.append(
         el("p", { className: "pr-print-lead", textContent: opportunityEmptyText(opps) })
       );
@@ -2052,47 +2495,54 @@
             ".",
         })
       );
-      // The PDF carries all of them, up to a hard cap — a page of paper is
-      // cheap, but a hundred contributions is a different document.
-      opps.items.slice(0, PRINT_OPP_LIMIT).forEach(r => {
+      // A sub-heading, not just a bolder paragraph: js/docx-writer.js maps h3
+      // to Heading2, so this is also what gives the DOCX a real outline entry
+      // under "Shared opportunities".
+      oppSection.append(
+        el("h3", { textContent: "Nearest " + opps.nearest.length })
+      );
+      oppSection.append(
+        el("p", {
+          className: "pr-print-note",
+          textContent:
+            "Sorted by distance from the parcel boundary, closest first. Contact details are printed " +
+            "because this report is for internal NRPC coalition members.",
+        })
+      );
+      opps.nearest.forEach(r => {
         const item = el("div", { className: "pr-opp-print" });
-        item.append(
-          el("div", { className: "pr-opp-print-head" },
-            el("span", {
-              className: "pr-opp-print-org",
-              textContent: r.organization || "Organization not given",
-            }),
-            el("span", { className: "pr-opp-print-where", textContent: opportunityWhere(r) })
-          ),
-          el("div", { className: "pr-opp-print-type", textContent: r.type + " · " + r.source })
+        // Same card as the panel, same order, plain-text email — a mailto on
+        // paper is a string with extra punctuation.
+        opportunityCardLines(r, "pr-opp-print", { linkEmail: false }).forEach(node =>
+          item.append(node)
         );
-        if (r.description) {
-          item.append(el("div", { className: "pr-opp-print-desc", textContent: r.description }));
-        }
-        const details = opportunityDetails(r);
-        if (details.length) {
-          item.append(
-            el("div", {
-              className: "pr-opp-print-meta",
-              textContent: details.map(([k, v]) => `${k}: ${v}`).join(" · "),
-            })
-          );
-        }
-        const by = [r.contributor, r.contributedOn ? "contributed " + r.contributedOn : null]
-          .filter(Boolean)
-          .join(" · ");
-        if (by) item.append(el("div", { className: "pr-opp-print-by", textContent: by }));
         oppSection.append(item);
       });
-      if (opps.items.length > PRINT_OPP_LIMIT) {
+      const printBeyond = opps.items.length - opps.nearest.filter(r => r.relation !== WIDER).length;
+      if (printBeyond > 0) {
         oppSection.append(
           el("p", {
             className: "pr-print-note",
-            textContent: `${opps.items.length - PRINT_OPP_LIMIT} further contribution${
-              opps.items.length - PRINT_OPP_LIMIT === 1 ? "" : "s"
-            } matched and are not printed; this export shows the closest ${PRINT_OPP_LIMIT}.`,
+            textContent:
+              `${printBeyond} further contribution${printBeyond === 1 ? " is" : "s are"} on this parcel, on a ` +
+              `parcel touching it, or within ${opps.bufferMetres} m and ${
+                printBeyond === 1 ? "is" : "are"
+              } not printed — this section is the nearest ${opps.nearest.length}. ` +
+              `The map below draws all of them.`,
           })
         );
+      }
+      const printWiden = widenNote(opps);
+      if (printWiden) {
+        oppSection.append(el("p", { className: "pr-print-note", textContent: printWiden }));
+      }
+      const printBulk = bulkLoadNote(opps);
+      if (printBulk) {
+        oppSection.append(el("p", { className: "pr-print-note", textContent: printBulk }));
+      }
+      const printEmail = contactEmailNote(opps);
+      if (printEmail) {
+        oppSection.append(el("p", { className: "pr-print-note", textContent: printEmail }));
       }
       if (opps.unavailable.length) {
         oppSection.append(
@@ -2143,8 +2593,11 @@
         textContent:
           "Owner and taxpayer names are on the county record but are deliberately left " +
           "out of this export, as they are left out of the request sent to the model. " +
-          "The names of the people who contributed each shared opportunity are printed " +
-          "here, because they are who to call — but they too are withheld from the model.",
+          "The name and — where the record carries one — the email of the person who " +
+          "contributed each shared opportunity ARE printed here, because they are who to " +
+          "call and this report is written for internal NRPC coalition members. Neither " +
+          "reaches the language model: the request it is sent carries the organisation " +
+          "and the description, never the individual.",
       }),
       el("p", {
         textContent:
