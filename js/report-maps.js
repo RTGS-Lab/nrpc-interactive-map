@@ -587,6 +587,39 @@ window.NRPCReportMaps = (function () {
       g.push(parcelTop);
       frameOn.push(frameBuf ? new m.Graphic({ geometry: frameBuf }) : parcelTop);
 
+      // A multi-parcel selection: each parcel labelled with its OWN score and
+      // rank, because the model has no combined number — see combineFacts().
+      if (facts.multi && facts.parcels) {
+        facts.parcels.forEach(pf => {
+          const pmod = pf.model;
+          if (!pmod || !pf.parcelRings) return;
+          const at = meanPoint(ring4326(pf.parcelRings));
+          if (!at) return;
+          const bits = [];
+          const overall = pmod.scores ? pmod.scores["Overall Value"] : null;
+          if (overall !== null && overall !== undefined) bits.push("Score " + overall.toFixed(3));
+          if (pmod.rank !== null && pmod.rank !== undefined)
+            bits.push("Rank " + pmod.rank.toLocaleString("en-US"));
+          if (!bits.length) return;
+          g.push(
+            new m.Graphic({
+              geometry: at,
+              symbol: {
+                type: "text",
+                text: bits.join(" · "),
+                color: [10, 10, 10, 1],
+                backgroundColor: [255, 255, 255, 0.94],
+                borderLineColor: [20, 60, 200, 1],
+                borderLineSize: Math.max(1, 1.5 * k),
+                haloColor: [255, 255, 255, 0.9],
+                haloSize: Math.max(1, 1.5 * k),
+                font: { size: Math.round(13 * k), weight: "bold", family: "sans-serif" },
+              },
+            })
+          );
+        });
+      }
+
       // The parcel's own score and rank, on the parcel, so the sheet does not
       // have to be read against the legend to find out what the subject scores.
       // The percentile and the seven sub-scores are in the furniture; putting
@@ -1473,11 +1506,20 @@ window.NRPCReportMaps = (function () {
 
   // ── The three plates' legend specs ───────────────────────────────────────
 
+  // "Subject parcel" on a one-parcel report, "Selected parcels" on a
+  // multi-parcel one — the same orange outlines either way.
+  function subjectLabel(facts) {
+    return facts && facts.multi ? "Selected parcels" : "Subject parcel";
+  }
+  function touchingLabel(facts) {
+    return facts && facts.multi ? "Parcels touching them" : "Parcels touching it";
+  }
+
   /** Plate 1. The 250 m ring row is gone with the ring itself. */
   function plateOneLegend(facts) {
     const out = [
-      { label: "Subject parcel", fill: "rgba(255,190,60,0.35)", stroke: "rgb(255,150,0)" },
-      { label: "Parcels touching it", fill: "rgba(120,120,120,0.22)", stroke: "rgb(60,60,60)", dash: true },
+      { label: subjectLabel(facts), fill: "rgba(255,190,60,0.35)", stroke: "rgb(255,150,0)" },
+      { label: touchingLabel(facts), fill: "rgba(120,120,120,0.22)", stroke: "rgb(60,60,60)", dash: true },
     ];
     const opps = facts.sharedOpportunities;
     const present = new Set(((opps && opps.mapGeometry && opps.mapGeometry.features) || []).map(f => f.relation));
@@ -1555,11 +1597,15 @@ window.NRPCReportMaps = (function () {
     const plan = [
       {
         kind: "facts",
-        title: "Figure 1. The parcel",
+        title: facts.multi ? "Figure 1. The parcels" : "Figure 1. The parcel",
         caption: () =>
-          `The subject parcel outlined on aerial imagery. PID ${
-            (facts.identity && facts.identity.pid) || "unknown"
-          }${facts.land && facts.land.parcelAcres ? `, ${facts.land.parcelAcres} acres` : ""}.`,
+          facts.multi
+            ? `The ${facts.multi.count} selected parcels outlined on aerial imagery. PIDs ${facts.multi.pids.join(
+                ", "
+              )}${facts.land && facts.land.parcelAcres ? `; ${facts.land.parcelAcres} acres in total` : ""}.`
+            : `The subject parcel outlined on aerial imagery. PID ${
+                (facts.identity && facts.identity.pid) || "unknown"
+              }${facts.land && facts.land.parcelAcres ? `, ${facts.land.parcelAcres} acres` : ""}.`,
         margin: 0.35,
       },
       {
@@ -1568,7 +1614,9 @@ window.NRPCReportMaps = (function () {
         caption: () => {
           const hits = (facts.context || []).filter(c => c.count > 0).map(c => c.layer);
           return (
-            `The parcel and a ${facts.contextBufferMetres || 250} m geodesic ring around it — the ` +
+            `The ${facts.multi ? "parcels" : "parcel"} and a ${facts.contextBufferMetres || 250} m geodesic ring around ${
+              facts.multi ? "them" : "it"
+            } — the ` +
             `area the context counts are measured over. ` +
             (hits.length
               ? `Layers with a feature inside the ring: ${hits.join("; ")}.`
@@ -1700,7 +1748,7 @@ window.NRPCReportMaps = (function () {
         "plate",
         size,
         {
-          title: "The parcel and its neighbourhood",
+          title: facts.multi ? "The parcels and their neighbourhood" : "The parcel and its neighbourhood",
           layout: "full",
           legend: { title: "Legend", entries: plateOneLegend(facts) },
           notes: [
@@ -1732,6 +1780,8 @@ window.NRPCReportMaps = (function () {
             (mod.topPercentOfCounty !== null && mod.topPercentOfCounty !== undefined
               ? ` — top ${mod.topPercentOfCounty}% of the county`
               : "")
+          : facts.multi
+          ? `${facts.multi.count} parcels — the model ranks parcels one at a time; each parcel's rank is in the report.`
           : "This parcel is not present in the prioritization model layer.";
       const p = await plate(
         "eco",
@@ -1739,10 +1789,11 @@ window.NRPCReportMaps = (function () {
         PLATE_PORTRAIT,
         {
           title: "Ecological sensitivity and suitability",
-          subtitle:
-            (facts.identity && facts.identity.address
-              ? facts.identity.address + " · "
-              : "") + `PID ${(facts.identity && facts.identity.pid) || "unknown"} · ${rankLine}`,
+          subtitle: facts.multi
+            ? `PIDs ${facts.multi.pids.join(" · ")} · ${rankLine}`
+            : (facts.identity && facts.identity.address
+                ? facts.identity.address + " · "
+                : "") + `PID ${(facts.identity && facts.identity.pid) || "unknown"} · ${rankLine}`,
           kicker:
             "Hennepin County Parcel Prioritization Model, the layer's own five class breaks · " +
             "Metropolitan Council ecologically significant and sensitive areas",
@@ -1869,9 +1920,9 @@ window.NRPCReportMaps = (function () {
             legend: {
               title: "Nearest " + rows.length + " contributions",
               entries: [
-                { label: "Subject parcel", fill: "rgba(255,190,60,0.35)", stroke: "rgb(255,150,0)" },
+                { label: subjectLabel(facts), fill: "rgba(255,190,60,0.35)", stroke: "rgb(255,150,0)" },
                 {
-                  label: "Parcels touching it",
+                  label: touchingLabel(facts),
                   fill: "rgba(120,120,120,0.22)",
                   stroke: "rgb(60,60,60)",
                   dash: true,

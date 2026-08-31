@@ -1523,6 +1523,286 @@
     };
   }
 
+  // ── Multi-parcel selection: combining per-parcel facts ───────────────────
+  //
+  // A selection of several parcels keeps every per-parcel facts object exactly
+  // as assembleFacts() built it — those are what the per-parcel print tables
+  // and the prompt's `parcels` array are made from — and derives ONE combined
+  // facts object for everything that renders a single report: the panel table,
+  // the merged opportunity cards, the figures and plates, the brief. Nothing
+  // in the single-parcel path changes shape; a combined object simply carries
+  // `multi` and `parcels` on top of the same keys.
+
+  /**
+   * Merge the per-parcel sharedOpportunities objects into one. Rows are
+   * deduped by their stable id (layer key + OBJECTID); when the same
+   * contribution is in scope for two parcels, the better relation wins —
+   * a row that is ON_PARCEL for parcel B must not be reported as "nearby"
+   * because parcel A also saw it at 180 m. Distances are each measured to
+   * the boundary of the parcel that found the row, so the kept distance
+   * means "to the nearest selected parcel", which is what a reader of a
+   * combined report is asking.
+   */
+  function mergeOpportunities(oppsList, selectedPids) {
+    const live = (oppsList || []).filter(Boolean);
+    if (!live.length) return null;
+    const selSet = new Set(selectedPids || []);
+
+    const tierOf = r => TIER_RANK[r.relation] ?? 9;
+    const better = (a, b) =>
+      tierOf(a) !== tierOf(b)
+        ? tierOf(a) < tierOf(b)
+        : (a.distanceMetres ?? 1e9) < (b.distanceMetres ?? 1e9);
+    const best = new Map();
+    const claim = r => {
+      if (!r) return;
+      const cur = best.get(r.id);
+      // Cloned: nearestRank is recomputed for the merged list below, and the
+      // per-parcel objects keep their own numbering for their own sections.
+      if (!cur || better(r, cur)) best.set(r.id, { ...r, nearestRank: null });
+    };
+    live.forEach(o => (o.items || []).forEach(claim));
+    // Widened rows exist only inside `nearest`. Claimed through the same map,
+    // so a row one parcel found by widening and another holds in scope keeps
+    // the in-scope relation.
+    live.forEach(o => (o.nearest || []).forEach(claim));
+
+    const merged = [...best.values()];
+    const byDistance = (a, b) =>
+      (a.distanceMetres ?? 1e9) - (b.distanceMetres ?? 1e9) ||
+      tierOf(a) - tierOf(b) ||
+      String(a.id).localeCompare(String(b.id));
+
+    // `items` keeps the meaning it has on one parcel: the in-scope tiers only.
+    const items = merged.filter(r => r.relation !== WIDER).sort(byDistance);
+    const nearest = merged.slice().sort(byDistance).slice(0, OPP_NEAREST_N);
+    nearest.forEach((r, i) => {
+      r.nearestRank = i + 1;
+    });
+    const rankById = new Map(nearest.map(r => [r.id, r.nearestRank]));
+    const count = rel => items.filter(r => r.relation === rel).length;
+
+    // Map geometry: features deduped by id with the merged numbering, the
+    // adjacent-parcel outlines deduped by PID — minus the parcels that are
+    // themselves selected, which are subjects now, not neighbours.
+    const featById = new Map();
+    const adjByPid = new Map();
+    live.forEach(o => {
+      const mg = o.mapGeometry || {};
+      (mg.features || []).forEach(ft => {
+        if (!featById.has(ft.id)) featById.set(ft.id, { ...ft });
+      });
+      (mg.adjacentParcels || []).forEach(p => {
+        if (!p.pid || selSet.has(p.pid) || adjByPid.has(p.pid)) return;
+        adjByPid.set(p.pid, p);
+      });
+    });
+    featById.forEach(ft => {
+      ft.nearestRank = rankById.get(ft.id) || null;
+      const kept = best.get(ft.id);
+      if (kept) {
+        ft.relation = kept.relation;
+        ft.adjacentParcelPid = kept.adjacentParcelPid || null;
+      }
+    });
+
+    // Layer status: a layer down for ANY parcel makes the merged section a
+    // floor, so errors OR together across parcels.
+    const statusByLayer = new Map();
+    live.forEach(o =>
+      (o.layerStatus || []).forEach(s => {
+        const cur = statusByLayer.get(s.layer);
+        if (!cur) statusByLayer.set(s.layer, { ...s });
+        else {
+          cur.error = cur.error || s.error;
+          cur.truncated = cur.truncated || s.truncated;
+          cur.count = Math.max(cur.count || 0, s.count || 0);
+        }
+      })
+    );
+    const layerStatus = [...statusByLayer.values()];
+    const unavailable = layerStatus.filter(s => s.error).map(s => s.layer);
+
+    // Adjacency, summed where summing is honest and worst-case where it is not.
+    const adjs = live.map(o => o.adjacency).filter(Boolean);
+    const adjacency = adjs.length
+      ? {
+          toleranceMetres: adjs[0].toleranceMetres,
+          parcelsSearched: adjs.reduce((n, a) => n + (a.parcelsSearched || 0), 0),
+          parcelsNotSearched: adjs.reduce((n, a) => n + (a.parcelsNotSearched || 0), 0),
+          moreThanFetched: adjs.some(a => a.moreThanFetched),
+          farthestParcelMetres: adjs.reduce(
+            (m, a) => (a.farthestParcelMetres !== null && a.farthestParcelMetres > m ? a.farthestParcelMetres : m),
+            0
+          ) || null,
+          clippedAtMetres: adjs.reduce((m, a) => (a.clippedAtMetres ? a.clippedAtMetres : m), null),
+          pids: [...new Set(adjs.flatMap(a => a.pids || []).filter(p => !selSet.has(p)))],
+          unavailable: adjs.every(a => a.unavailable)
+            ? adjs[0].unavailable
+            : null,
+        }
+      : null;
+
+    // The widen note, restated for a merged list: how many of the printed
+    // rows only exist because some parcel's search had to widen.
+    const anyWiden = live.some(o => o.widen);
+    const widerKept = nearest.filter(r => r.relation === WIDER).length;
+    const widen = anyWiden
+      ? {
+          radiusMetres: OPP_WIDEN_M,
+          inScopeBefore: nearest.length - widerKept,
+          added: widerKept,
+          stillShort: nearest.length < OPP_NEAREST_N,
+          unreachable: [...new Set(live.flatMap(o => (o.widen && o.widen.unreachable) || []))],
+        }
+      : null;
+
+    return {
+      nearest,
+      nearestLimit: OPP_NEAREST_N,
+      widen,
+      contactEmailAvailable: !!OPP_EMAIL_FIELD,
+      bufferMetres: NEARBY_M,
+      searchDistanceM: Math.max(...live.map(o => o.searchDistanceM || 0)) || NEARBY_M,
+      adjacency,
+      droppedBeyondTiers: live.reduce((n, o) => n + (o.droppedBeyondTiers || 0), 0),
+      note:
+        live[0].note +
+        " This selection holds " +
+        (selSet.size || live.length) +
+        " parcels: each distance is measured to the boundary of the nearest selected parcel, a " +
+        "contribution in scope for more than one of them is counted once, and 'on the parcel' " +
+        "means on any parcel in the selection.",
+      items,
+      mapGeometry: {
+        adjacentParcels: [...adjByPid.values()],
+        features: [...featById.values()],
+      },
+      onParcelCount: count(ON_PARCEL),
+      onAdjacentCount: count(ON_ADJACENT),
+      nearbyCount: count(NEARBY),
+      organizations: [...new Set(items.map(r => r.organization).filter(Boolean))],
+      layerStatus,
+      unavailable,
+    };
+  }
+
+  /**
+   * Merge the nine per-parcel context sections into one, layer by layer.
+   * Named features dedupe across parcels — the park that is near both
+   * parcels is one park. The count is the number of distinct names where
+   * names exist, otherwise the largest per-parcel count, and either way a
+   * multi-parcel count is a floor: the per-layer query cap applies per
+   * parcel, and unnamed features cannot be deduped.
+   */
+  function mergeContext(factsList) {
+    const byLayer = new Map();
+    factsList.forEach(f =>
+      (f.context || []).forEach(c => {
+        const cur = byLayer.get(c.layer);
+        if (!cur) {
+          byLayer.set(c.layer, {
+            layer: c.layer,
+            error: c.error,
+            count: c.count,
+            truncated: c.truncated,
+            names: [...c.names],
+            detail: (c.detail || []).slice(0, 4),
+          });
+          return;
+        }
+        cur.error = cur.error || c.error;
+        cur.truncated = cur.truncated || c.truncated;
+        const names = new Set(cur.names);
+        c.names.forEach(n => names.add(n));
+        cur.names = [...names];
+        cur.count = cur.names.length || Math.max(cur.count, c.count);
+      })
+    );
+    return [...byLayer.values()];
+  }
+
+  const sumOrNull = values => {
+    const known = values.filter(v => v !== null && v !== undefined);
+    return known.length ? known.reduce((a, b) => a + b, 0) : null;
+  };
+
+  /**
+   * One combined facts object for a multi-parcel selection. Same shape as a
+   * single parcel's facts everywhere downstream code reads it — parcelRings,
+   * identity, land, context, sharedOpportunities — plus `multi` and
+   * `parcels`. `model` is null on purpose: the prioritization model ranks
+   * parcels one at a time and an invented blended rank would be a number the
+   * county never published. Per-parcel ranks live on in `parcels[]`.
+   */
+  function combineFacts(entries) {
+    const parcels = entries.map(e => e.facts);
+    const pids = parcels.map(f => (f.identity && f.identity.pid) || "unknown");
+    const last = entries[entries.length - 1];
+
+    const acres = sumOrNull(parcels.map(f => f.land.parcelAcres));
+    const sqft = sumOrNull(parcels.map(f => f.land.parcelAreaSqFt));
+    const cities = [...new Set(parcels.map(f => f.identity.city).filter(Boolean))];
+    const types = [...new Set(parcels.map(f => f.land.propertyType).filter(Boolean))];
+
+    const valueKnown = key => parcels.every(f => f.value[key] !== null && f.value[key] !== undefined);
+
+    return {
+      multi: {
+        count: parcels.length,
+        pids,
+        // True per value field only when every parcel carries it — a summed
+        // total over a parcel with a null would silently understate.
+        valueComplete: {
+          estimatedMarketValueTotal: valueKnown("estimatedMarketValueTotal"),
+          estimatedLandValue: valueKnown("estimatedLandValue"),
+          totalTax: valueKnown("totalTax"),
+        },
+      },
+      parcels,
+      clickedAt: last.facts.clickedAt,
+      parcelRings: parcels.some(f => f.parcelRings)
+        ? parcels.flatMap(f => f.parcelRings || [])
+        : null,
+      identity: {
+        pid: pids.join(", "),
+        address: `${parcels.length} parcels`,
+        city: cities.join(" · ") || null,
+        zip: null,
+        legalAddition: null,
+        lot: null,
+        block: null,
+      },
+      owner: null,
+      land: {
+        parcelAreaSqFt: sqft,
+        parcelAcres: acres === null ? null : Number(acres.toFixed(2)),
+        propertyType: types.join("; ") || null,
+        homesteadStatus: null,
+        yearBuilt: null,
+        taxForfeitLand: null,
+        schoolDistrict: [...new Set(parcels.map(f => f.land.schoolDistrict).filter(Boolean))].join(", ") || null,
+        watershedNo: [...new Set(parcels.map(f => f.land.watershedNo).filter(Boolean))].join(", ") || null,
+      },
+      value: {
+        estimatedMarketValueTotal: sumOrNull(parcels.map(f => f.value.estimatedMarketValueTotal)),
+        estimatedLandValue: sumOrNull(parcels.map(f => f.value.estimatedLandValue)),
+        estimatedBuildingValue: sumOrNull(parcels.map(f => f.value.estimatedBuildingValue)),
+        totalTax: sumOrNull(parcels.map(f => f.value.totalTax)),
+        lastSaleDateYYYYMM: null,
+        lastSalePrice: null,
+        lastSaleType: null,
+      },
+      model: null,
+      contextBufferMetres: CONTEXT_BUFFER_M,
+      context: mergeContext(parcels),
+      sharedOpportunities: mergeOpportunities(
+        parcels.map(f => f.sharedOpportunities),
+        pids
+      ),
+    };
+  }
+
   // ── Prompt ───────────────────────────────────────────────────────────────
 
   const SYSTEM_PROMPT = [
@@ -1588,6 +1868,30 @@
     "## What to check next",
     "Two to four concrete next steps for a planner, each tied to something specific in",
     "the data — including anything the data could not answer.",
+  ].join("\n");
+
+  // Appended to the system prompt when the selection holds more than one
+  // parcel. The sections stay the same; what changes is what "the parcel"
+  // means and how the per-parcel model ranks are handled.
+  const SYSTEM_PROMPT_MULTI = [
+    "",
+    "THIS REQUEST COVERS A SELECTION OF SEVERAL PARCELS, NOT ONE. The JSON carries a",
+    "`combined` object for the selection as a whole and a `parcels` array with each",
+    "parcel's own data. Write ONE brief about the selection as a whole, in the same",
+    "sections, with these changes:",
+    "- The Summary says what the selection is: how many parcels, total acreage, and",
+    "  whether they read as one assembly. Say whether the parcels are adjacent ONLY if",
+    "  the data shows it (a shared opportunity on one parcel listed as adjacent to",
+    "  another selected parcel's PID, or matching addresses); otherwise do not guess.",
+    "- Priority score: there is no combined rank — the county model ranks parcels one",
+    "  at a time. Give each parcel's rank and percentile briefly, name the",
+    "  best-ranked parcel, and never average or invent a blended score.",
+    "- combined.mergedSharedOpportunities is the merged, deduplicated view the report",
+    "  prints, and its `nearest` list is the one the report numbers 1-5 — write the",
+    "  Shared opportunities section from it, not from any single parcel's list.",
+    "- Combined value or acreage totals marked incomplete are floors; say so where it",
+    "  matters.",
+    "- Up to 550 words for the whole brief.",
   ].join("\n");
 
   // The panel and the printed page can afford every field of every
@@ -1717,7 +2021,7 @@
     };
   }
 
-  function buildUserMessage(facts, includeOwner) {
+  function singleParcelPayload(facts, includeOwner) {
     const payload = JSON.parse(JSON.stringify(facts));
     // Geometry is for the report maps, not for the model: a parcel outline is
     // a few hundred coordinate pairs the brief cannot use and would pay for.
@@ -1732,10 +2036,43 @@
     payload.sharedOpportunities = stripOpportunityContributors(
       compactOpportunities(facts.sharedOpportunities)
     );
+    return payload;
+  }
+
+  function buildUserMessage(facts, includeOwner) {
+    if (!facts.multi) {
+      return (
+        "Parcel data:\n\n```json\n" +
+        JSON.stringify(singleParcelPayload(facts, includeOwner), null, 2) +
+        "\n```\n\nWrite the brief."
+      );
+    }
+    // A multi-parcel selection: per-parcel payloads exactly as a single
+    // request would send them — same owner rule, same contributor stripping —
+    // plus the combined view the report itself prints from.
+    const payload = {
+      combined: {
+        parcelCount: facts.multi.count,
+        pids: facts.multi.pids,
+        totalAcres: facts.land.parcelAcres,
+        totalAcresIncomplete: facts.parcels.some(p => p.land.parcelAcres === null) || null,
+        totalEstimatedMarketValue: facts.value.estimatedMarketValueTotal,
+        totalEstimatedMarketValueIncomplete:
+          !facts.multi.valueComplete.estimatedMarketValueTotal || null,
+        cities: [...new Set(facts.parcels.map(p => p.identity.city).filter(Boolean))],
+        mergedContext: JSON.parse(JSON.stringify(facts.context)),
+        mergedSharedOpportunities: stripOpportunityContributors(
+          compactOpportunities(facts.sharedOpportunities)
+        ),
+      },
+      parcels: facts.parcels.map(p => singleParcelPayload(p, includeOwner)),
+    };
     return (
-      "Parcel data:\n\n```json\n" +
+      "Data for a selection of " +
+      facts.multi.count +
+      " parcels:\n\n```json\n" +
       JSON.stringify(payload, null, 2) +
-      "\n```\n\nWrite the brief."
+      "\n```\n\nWrite the brief for the selection as a whole."
     );
   }
 
@@ -1887,8 +2224,62 @@
 
   // ── Fact table for the panel ─────────────────────────────────────────────
 
+  // One line per parcel of a multi-selection: where it is, how big, how the
+  // model ranks it. The detail stays in the export's per-parcel tables.
+  function parcelLine(f) {
+    const bits = [];
+    const where = [f.identity.address, f.identity.city].filter(Boolean).join(", ");
+    if (where) bits.push(where);
+    if (f.land.parcelAcres !== null) bits.push(`${f.land.parcelAcres} ac`);
+    if (f.model && f.model.rank !== null) {
+      bits.push(
+        `rank ${f.model.rank.toLocaleString("en-US")}` +
+          (f.model.parcelsRanked ? ` (top ${topPct(f.model.rank, f.model.parcelsRanked)})` : "")
+      );
+    } else {
+      bits.push("not in the model layer");
+    }
+    return bits.join(" · ");
+  }
+
+  function multiFactRows(f) {
+    const incomplete = key => (f.multi.valueComplete[key] ? "" : " — incomplete, a parcel has no figure");
+    const rows = [
+      ["Parcels", String(f.multi.count)],
+      ["Cities", f.identity.city],
+      [
+        "Total size",
+        f.land.parcelAcres === null ? null : `${f.land.parcelAcres} acres`,
+      ],
+      ["Property types", f.land.propertyType],
+      [
+        "Combined market value",
+        f.value.estimatedMarketValueTotal === null
+          ? null
+          : money(f.value.estimatedMarketValueTotal) + incomplete("estimatedMarketValueTotal"),
+      ],
+      [
+        "Combined land value",
+        f.value.estimatedLandValue === null
+          ? null
+          : money(f.value.estimatedLandValue) + incomplete("estimatedLandValue"),
+      ],
+      ...f.parcels.map(p => [`PID ${p.identity.pid}`, parcelLine(p)]),
+    ];
+    const hits = f.context.filter(c => c.count > 0);
+    rows.push([
+      `Within ${f.contextBufferMetres} m`,
+      hits.length
+        ? hits.map(c => `${c.layer} (${c.count}${c.truncated ? "+" : ""})`).join("; ")
+        : "nothing from the context layers",
+    ]);
+    rows.push(["Shared opportunities", opportunitySummary(f.sharedOpportunities, f.contextBufferMetres)]);
+    return rows.filter(([, v]) => v !== null && v !== undefined && v !== "");
+  }
+
   function factRows(facts) {
     const f = facts;
+    if (f.multi) return multiFactRows(f);
     const rows = [
       ["PID", f.identity.pid],
       ["Address", [f.identity.address, f.identity.city].filter(Boolean).join(", ") || null],
@@ -2526,13 +2917,28 @@
     // Hennepin writes an all-zero ZIP_CD where it has none; printing "00000"
     // under the address would read as a real zip.
     const zip = zeroStrOrNull(f.identity.zip);
-    const where =
-      [f.identity.address, f.identity.city, zip].filter(Boolean).join(", ") ||
-      "No street address on the county record";
+    const where = f.multi
+      ? [
+          `${f.multi.count} parcels`,
+          f.land.parcelAcres !== null ? `${f.land.parcelAcres} acres total` : null,
+          f.identity.city,
+        ]
+          .filter(Boolean)
+          .join(" · ")
+      : [f.identity.address, f.identity.city, zip].filter(Boolean).join(", ") ||
+        "No street address on the county record";
     const head = el("header", { className: "pr-print-head" });
     head.append(
-      el("div", { className: "pr-print-kicker", textContent: "NRPC Interactive Map · Parcel Report" }),
-      el("h1", { className: "pr-print-title", textContent: "PID " + (f.identity.pid || "unknown") }),
+      el("div", {
+        className: "pr-print-kicker",
+        textContent: "NRPC Interactive Map · " + (f.multi ? "Parcels Report" : "Parcel Report"),
+      }),
+      el("h1", {
+        className: "pr-print-title",
+        textContent: f.multi
+          ? "PIDs " + f.multi.pids.join(" · ")
+          : "PID " + (f.identity.pid || "unknown"),
+      }),
       el("div", { className: "pr-print-sub", textContent: where }),
       el("div", {
         className: "pr-print-meta",
@@ -2548,79 +2954,167 @@
     );
     root.append(head);
 
-    // -- the parcel --
-    const legal = [
-      f.identity.legalAddition,
-      f.identity.lot ? "Lot " + f.identity.lot : null,
-      f.identity.block ? "Block " + f.identity.block : null,
-    ]
-      .filter(Boolean)
-      .join(", ");
-    // No sale date means no sale on the record — a bare "$0" there would read
-    // as a fact rather than as an absence.
-    const soldOn = saleDate(f.value.lastSaleDateYYYYMM);
-    const sale = soldOn
-      ? [soldOn, money(f.value.lastSalePrice), f.value.lastSaleType].filter(Boolean).join(" · ")
-      : null;
-
-    section(
-      "The parcel",
-      printTable([
-        ["PID", f.identity.pid],
-        ["Address", where],
-        ...ownerRows(f),
+    /**
+     * The county-record table for ONE parcel's facts — the whole of "The
+     * parcel" section on a single-parcel report, and one table per parcel on
+     * a multi-parcel one. Same rows either way, so the two cannot drift.
+     */
+    const parcelRecordTable = pf => {
+      const pzip = zeroStrOrNull(pf.identity.zip);
+      const pwhere =
+        [pf.identity.address, pf.identity.city, pzip].filter(Boolean).join(", ") ||
+        "No street address on the county record";
+      const legal = [
+        pf.identity.legalAddition,
+        pf.identity.lot ? "Lot " + pf.identity.lot : null,
+        pf.identity.block ? "Block " + pf.identity.block : null,
+      ]
+        .filter(Boolean)
+        .join(", ");
+      // No sale date means no sale on the record — a bare "$0" there would
+      // read as a fact rather than as an absence.
+      const soldOn = saleDate(pf.value.lastSaleDateYYYYMM);
+      const sale = soldOn
+        ? [soldOn, money(pf.value.lastSalePrice), pf.value.lastSaleType].filter(Boolean).join(" · ")
+        : null;
+      return printTable([
+        ["PID", pf.identity.pid],
+        ["Address", pwhere],
+        ...ownerRows(pf),
         ["Legal description", legal],
         [
           "Size",
-          f.land.parcelAcres === null
+          pf.land.parcelAcres === null
             ? null
-            : `${f.land.parcelAcres} acres (${Math.round(f.land.parcelAreaSqFt).toLocaleString("en-US")} sq ft)`,
+            : `${pf.land.parcelAcres} acres (${Math.round(pf.land.parcelAreaSqFt).toLocaleString("en-US")} sq ft)`,
         ],
-        ["Property type", f.land.propertyType],
-        ["Homestead", f.land.homesteadStatus],
-        ["Year built", f.land.yearBuilt],
-        ["Tax-forfeit land", f.land.taxForfeitLand],
-        ["School district", f.land.schoolDistrict],
-        ["Watershed no.", f.land.watershedNo],
-        ["Est. market value", money(f.value.estimatedMarketValueTotal)],
-        ["Est. land value", money(f.value.estimatedLandValue)],
-        ["Est. building value", money(f.value.estimatedBuildingValue)],
-        ["Total tax", money(f.value.totalTax)],
+        ["Property type", pf.land.propertyType],
+        ["Homestead", pf.land.homesteadStatus],
+        ["Year built", pf.land.yearBuilt],
+        ["Tax-forfeit land", pf.land.taxForfeitLand],
+        ["School district", pf.land.schoolDistrict],
+        ["Watershed no.", pf.land.watershedNo],
+        ["Est. market value", money(pf.value.estimatedMarketValueTotal)],
+        ["Est. land value", money(pf.value.estimatedLandValue)],
+        ["Est. building value", money(pf.value.estimatedBuildingValue)],
+        ["Total tax", money(pf.value.totalTax)],
         ["Last sale", sale],
-      ])
-    );
+      ]);
+    };
 
-    appendFigure(root, "facts");
+    // The per-parcel model rows, used by both report shapes.
+    const modelRankText = pf =>
+      pf.model === null || pf.model.rank === null
+        ? "not ranked"
+        : pf.model.rank.toLocaleString("en-US") +
+          (pf.model.parcelsRanked
+            ? ` of ${pf.model.parcelsRanked.toLocaleString("en-US")} ranked parcels ` +
+              `(top ${topPct(pf.model.rank, pf.model.parcelsRanked)} of the county)`
+            : "");
 
-    // -- the model --
-    if (f.model) {
-      const rankText =
-        f.model.rank === null
-          ? "not ranked"
-          : f.model.rank.toLocaleString("en-US") +
-            (f.model.parcelsRanked
-              ? ` of ${f.model.parcelsRanked.toLocaleString("en-US")} ranked parcels ` +
-                `(top ${topPct(f.model.rank, f.model.parcelsRanked)} of the county)`
-              : "");
-      section(
-        "Prioritization model",
-        printTable([
-          ["County rank", rankText],
-          ...SCORE_FIELDS.map(([, alias]) => {
-            const v = num(f.model.scores[alias]);
-            return [alias, v === null ? null : v.toFixed(3)];
-          }),
-        ]),
-        el("p", { className: "pr-print-note", textContent: f.model.note })
-      );
+    if (!f.multi) {
+      // -- the parcel --
+      section("The parcel", parcelRecordTable(f));
+
+      appendFigure(root, "facts");
+
+      // -- the model --
+      if (f.model) {
+        section(
+          "Prioritization model",
+          printTable([
+            ["County rank", modelRankText(f)],
+            ...SCORE_FIELDS.map(([, alias]) => {
+              const v = num(f.model.scores[alias]);
+              return [alias, v === null ? null : v.toFixed(3)];
+            }),
+          ]),
+          el("p", { className: "pr-print-note", textContent: f.model.note })
+        );
+      } else {
+        section(
+          "Prioritization model",
+          el("p", {
+            className: "pr-print-note",
+            textContent: "This parcel is not present in the prioritization model layer.",
+          })
+        );
+      }
     } else {
+      // -- the selection --
+      const incomplete = key =>
+        f.multi.valueComplete[key] ? "" : " — incomplete: a parcel in the selection has no figure";
       section(
-        "Prioritization model",
+        "The selection",
+        printTable([
+          ["Parcels", String(f.multi.count)],
+          ["PIDs", f.multi.pids.join(", ")],
+          ["Cities", f.identity.city],
+          [
+            "Total size",
+            f.land.parcelAcres === null
+              ? null
+              : `${f.land.parcelAcres} acres (${Math.round(f.land.parcelAreaSqFt).toLocaleString("en-US")} sq ft)`,
+          ],
+          ["Property types", f.land.propertyType],
+          [
+            "Combined est. market value",
+            f.value.estimatedMarketValueTotal === null
+              ? null
+              : money(f.value.estimatedMarketValueTotal) + incomplete("estimatedMarketValueTotal"),
+          ],
+          [
+            "Combined est. land value",
+            f.value.estimatedLandValue === null
+              ? null
+              : money(f.value.estimatedLandValue) + incomplete("estimatedLandValue"),
+          ],
+          [
+            "Combined total tax",
+            f.value.totalTax === null ? null : money(f.value.totalTax) + incomplete("totalTax"),
+          ],
+        ]),
         el("p", {
           className: "pr-print-note",
-          textContent: "This parcel is not present in the prioritization model layer.",
+          textContent:
+            "Totals are sums over the selected parcels' county records. The prioritization " +
+            "model ranks parcels one at a time, so there is no combined rank — each parcel's " +
+            "rank and scores are in its own table below.",
         })
       );
+
+      appendFigure(root, "facts");
+
+      // -- each parcel, in selection order --
+      f.parcels.forEach((pf, i) => {
+        const modelBits = pf.model
+          ? [
+              printTable([
+                ["County rank", modelRankText(pf)],
+                ...SCORE_FIELDS.map(([, alias]) => {
+                  const v = num(pf.model.scores[alias]);
+                  return [alias, v === null ? null : v.toFixed(3)];
+                }),
+              ]),
+            ]
+          : [
+              el("p", {
+                className: "pr-print-note",
+                textContent: "This parcel is not present in the prioritization model layer.",
+              }),
+            ];
+        section(
+          `Parcel ${i + 1} of ${f.multi.count} — PID ${pf.identity.pid || "unknown"}`,
+          parcelRecordTable(pf),
+          el("h3", { textContent: "Prioritization model" }),
+          ...modelBits
+        );
+      });
+      if (f.parcels.some(pf => pf.model)) {
+        root.append(
+          el("p", { className: "pr-print-note", textContent: f.parcels.find(pf => pf.model).model.note })
+        );
+      }
     }
 
     // -- context --
@@ -2643,7 +3137,12 @@
         textContent:
           `Context features are matched against the parcel's bounding box padded by ` +
           `${f.contextBufferMetres} m, so a hit means on or near the parcel, never inside it. ` +
-          "A count marked + is a floor: the query returns at most eight features per layer.",
+          "A count marked + is a floor: the query returns at most eight features per layer." +
+          (f.multi
+            ? " For this selection each parcel was matched separately and the rows merged: " +
+              "named features near more than one parcel are counted once; a count is a floor " +
+              "where features carry no name to merge on."
+            : ""),
       })
     );
 
@@ -2861,8 +3360,21 @@
 
     const header = el("div", { id: "pr-header" });
     const title = el("span", { id: "pr-title", textContent: "Parcel Report" });
+    // Multi-select: the same control on desktop and on the phone, because
+    // this header is also the mobile sheet's header. Ctrl/Cmd/Shift-click
+    // does the same thing without the mode for anyone with a keyboard.
+    const addToggle = el("button", {
+      id: "pr-add-toggle",
+      type: "button",
+      textContent: "+ Add parcels",
+      title:
+        "Add parcels: while on, clicking the map adds each parcel to the selection " +
+        "instead of replacing it (clicking a selected parcel removes it). " +
+        "Ctrl-, Cmd- or Shift-click does the same without turning this on. " +
+        "The report covers every selected parcel.",
+    });
     const closeBtn = el("button", { id: "pr-close", textContent: "×", title: "Close" });
-    header.append(title, closeBtn);
+    header.append(title, addToggle, closeBtn);
 
     const body = el("div", { id: "pr-body" });
 
@@ -2871,6 +3383,12 @@
       textContent: "Click a parcel on the map to load its details.",
     });
     body.append(hint);
+
+    // The selection bar: one chip per selected parcel, shown whenever the
+    // selection is plural (or add mode is on, so the mechanism is visible
+    // before the second parcel lands).
+    const selBar = el("div", { id: "pr-selection", className: "hidden" });
+    body.append(selBar);
 
     const factsBox = el("div", { id: "pr-facts", className: "hidden" });
     const actions = el("div", { id: "pr-actions", className: "hidden" });
@@ -3000,6 +3518,13 @@
 
     // -- state --
     let facts = null;
+    // The selected parcels, in the order they were added: {pid, feature,
+    // facts, point}. One entry is the single-parcel report unchanged; more
+    // than one and `facts` above becomes combineFacts() over these.
+    let selection = [];
+    // While on, a plain map click ADDS the parcel to the selection instead of
+    // replacing it. Ctrl/Cmd/Shift-click adds regardless.
+    let addMode = false;
     let busy = false;
     let abortCtl = null;
     // Date.now() at the moment the current selection started. Set by
@@ -3132,6 +3657,7 @@
     function beginLoad() {
       if (abortCtl) abortCtl.abort();
       facts = null;
+      selection = [];
       clearReport();
       keyForm.classList.add("hidden");
       factsBox.classList.add("hidden");
@@ -3141,6 +3667,7 @@
       hint.textContent = "Loading parcel…";
       openPanel();
       highlightLayer.removeAll();
+      renderChips();
 
       lastPoint = null;
       loadStart = Date.now();
@@ -3149,28 +3676,96 @@
     }
 
     /**
-     * Everything downstream of "we are holding the parcel feature": outline it,
-     * assemble the facts, render them. This is the seam the two selection paths
-     * meet at — the desktop map click and the mobile "use my location" tap —
-     * so neither can drift from the other. Call beginLoad() first.
+     * The add-path counterpart of beginLoad(): the selection and its rendered
+     * facts stay on screen, but a brief mid-stream is aborted and a finished
+     * one cleared — a report over two parcels is not the report over three.
      */
-    async function selectParcelFeature(feature, lon, lat) {
-      if (!feature) {
-        hint.textContent = "No Hennepin County parcel at that point.";
+    function beginAdd() {
+      if (abortCtl) abortCtl.abort();
+      clearReport();
+      keyForm.classList.add("hidden");
+      openPanel();
+      setStatus("Adding parcel…", "busy");
+      loadStart = Date.now();
+      resetTimings(loadStart);
+      return loadStart;
+    }
+
+    // One chip per selected parcel. Clicking a chip's × removes that parcel;
+    // the bar appears once the selection is plural or add mode is on.
+    function renderChips() {
+      selBar.innerHTML = "";
+      const show = selection.length > 1 || (addMode && selection.length > 0);
+      selBar.classList.toggle("hidden", !show);
+      title.textContent =
+        selection.length > 1 ? `Parcels Report (${selection.length})` : "Parcel Report";
+      if (!show) return;
+      selection.forEach(entry => {
+        const chip = el("span", { className: "pr-chip" });
+        const label = el("span", {
+          className: "pr-chip-label",
+          textContent: "PID " + entry.pid,
+          title: [entry.facts.identity.address, entry.facts.identity.city].filter(Boolean).join(", ") || "",
+        });
+        const x = el("button", {
+          className: "pr-chip-x",
+          type: "button",
+          textContent: "×",
+          title: "Remove this parcel from the selection",
+        });
+        x.addEventListener("click", () => removeParcel(entry.pid));
+        chip.append(label, x);
+        selBar.append(chip);
+      });
+      if (selection.length > 1) {
+        const note = el("span", {
+          className: "pr-chip-note",
+          textContent: "One report covers all " + selection.length + ".",
+        });
+        selBar.append(note);
+      }
+    }
+
+    /**
+     * Everything downstream of "the selection changed": derive the report
+     * facts (one parcel's own, or combineFacts() over all of them), redraw
+     * every outline, render, and tell the listeners. Every path that adds,
+     * removes or replaces parcels ends here, so none of them can drift.
+     */
+    function finishSelection(point) {
+      if (!selection.length) {
+        facts = null;
+        lastPoint = null;
+        highlightLayer.removeAll();
+        renderChips();
+        clearReport();
+        factsBox.classList.add("hidden");
+        actions.classList.add("hidden");
+        shareRow.classList.add("hidden");
+        hint.classList.remove("hidden");
+        hint.textContent = "Click a parcel on the map to load its details.";
+        setStatus("");
         return null;
       }
-      if (feature.geometry) {
+      facts = selection.length === 1 ? selection[0].facts : combineFacts(selection);
+      lastPoint = point ? { ...point } : { ...selection[selection.length - 1].point };
+      highlightLayer.removeAll();
+      selection.forEach(entry => {
+        if (!entry.feature || !entry.feature.geometry) return;
         highlightLayer.add(
           new Graphic({
-            geometry: { type: "polygon", rings: feature.geometry.rings, spatialReference: { wkid: 4326 } },
+            geometry: {
+              type: "polygon",
+              rings: entry.feature.geometry.rings,
+              spatialReference: { wkid: 4326 },
+            },
             symbol: HIGHLIGHT_SYMBOL,
           })
         );
-      }
-      facts = await assembleFacts(feature, lon, lat);
-      lastPoint = { lon, lat };
+      });
       stageTimings.total = { startedAt: 0, ms: Date.now() - loadStart };
-      stageTimings.pid = facts && facts.identity ? facts.identity.pid : null;
+      stageTimings.pid = facts.multi ? facts.multi.pids.join(",") : facts.identity.pid;
+      renderChips();
       showFacts(facts);
       setStatus("");
       selectListeners.forEach(fn => {
@@ -3182,6 +3777,60 @@
       });
       return facts;
     }
+
+    function removeParcel(pid) {
+      const before = selection.length;
+      selection = selection.filter(e => e.pid !== pid);
+      if (selection.length === before) return;
+      clearReport();
+      finishSelection(null);
+    }
+
+    /**
+     * Everything downstream of "we are holding the parcel feature": outline it,
+     * assemble the facts, render them. This is the seam the selection paths
+     * meet at — the desktop map click, the mobile "use my location" tap and a
+     * PID selection — so none can drift. Call beginLoad() first. REPLACES the
+     * selection; the add path goes through toggleParcelFeature().
+     */
+    async function selectParcelFeature(feature, lon, lat) {
+      if (!feature) {
+        hint.textContent = "No Hennepin County parcel at that point.";
+        return null;
+      }
+      const f = await assembleFacts(feature, lon, lat);
+      selection = [{ pid: f.identity.pid, feature, facts: f, point: { lon, lat } }];
+      return finishSelection({ lon, lat });
+    }
+
+    /**
+     * The add path: a parcel already selected is removed, anything else is
+     * assembled and appended. Call beginAdd() first.
+     */
+    async function toggleParcelFeature(feature, lon, lat) {
+      if (!feature) {
+        say("No Hennepin County parcel at that point.", "warn", 3500);
+        setStatus("");
+        return facts;
+      }
+      const pid = clean(feature.attributes && feature.attributes.PID);
+      const already = pid && selection.some(e => e.pid === pid);
+      if (already) {
+        selection = selection.filter(e => e.pid !== pid);
+        say("PID " + pid + " removed from the selection.", "ok", 3000);
+        return finishSelection(null);
+      }
+      const f = await assembleFacts(feature, lon, lat);
+      selection.push({ pid: f.identity.pid, feature, facts: f, point: { lon, lat } });
+      return finishSelection({ lon, lat });
+    }
+
+    function setAddMode(on) {
+      addMode = !!on;
+      addToggle.classList.toggle("pr-add-on", addMode);
+      renderChips();
+    }
+    addToggle.addEventListener("click", () => setAddMode(!addMode));
 
     async function loadParcel(lon, lat) {
       beginLoad();
@@ -3205,17 +3854,26 @@
      */
     async function selectByPid(pid, opts) {
       const o = opts || {};
-      beginLoad();
+      // A search result or a deep link honours the same add mode a map click
+      // does, unless the caller says otherwise — so "Add parcels" plus the
+      // search box builds a selection without touching the map.
+      const additive = (o.add !== undefined ? o.add : addMode) && selection.length > 0;
+      if (additive) beginAdd();
+      else beginLoad();
       try {
         const feature = await timed("parcel", () => fetchParcelByPid(pid));
         if (!feature) {
-          hint.textContent = `No Hennepin County parcel with PID ${pid}.`;
-          return null;
+          if (additive) say(`No Hennepin County parcel with PID ${pid}.`, "warn", 3500);
+          else hint.textContent = `No Hennepin County parcel with PID ${pid}.`;
+          setStatus("");
+          return additive ? facts : null;
         }
         const bbox = feature.geometry ? ringsBBox(feature.geometry) : null;
         const lon = bbox ? (bbox.xmin + bbox.xmax) / 2 : null;
         const lat = bbox ? (bbox.ymin + bbox.ymax) / 2 : null;
-        const f = await selectParcelFeature(feature, lon, lat);
+        const f = additive
+          ? await toggleParcelFeature(feature, lon, lat)
+          : await selectParcelFeature(feature, lon, lat);
         if (bbox && o.zoom !== false) {
           // Padded so the parcel is not flush against the panel edge.
           const pad = padBBox(bbox, 120);
@@ -3243,6 +3901,46 @@
       }
     }
 
+    /**
+     * Select several parcels by PID — the multi-parcel deep link
+     * (?pid=A,B,C), and the path a script drives. Sequential on purpose:
+     * each parcel's assembly is itself concurrent inside, and the selection
+     * renders progressively. Zooms once, to the whole selection.
+     */
+    async function selectPids(pids, opts) {
+      const o = opts || {};
+      const list = (pids || []).filter(Boolean);
+      if (!list.length) return null;
+      let f = await selectByPid(list[0], { ...o, add: false, zoom: false });
+      for (const pid of list.slice(1)) {
+        f = await selectByPid(pid, { ...o, add: true, zoom: false });
+      }
+      if (o.zoom !== false && selection.length) {
+        const boxes = selection
+          .map(e => (e.feature.geometry ? ringsBBox(e.feature.geometry) : null))
+          .filter(Boolean);
+        if (boxes.length) {
+          const all = boxes.reduce((acc, b) => ({
+            xmin: Math.min(acc.xmin, b.xmin),
+            ymin: Math.min(acc.ymin, b.ymin),
+            xmax: Math.max(acc.xmax, b.xmax),
+            ymax: Math.max(acc.ymax, b.ymax),
+          }));
+          const pad = padBBox(all, 120);
+          const target = {
+            type: "extent",
+            xmin: pad.xmin, ymin: pad.ymin, xmax: pad.xmax, ymax: pad.ymax,
+            spatialReference: { wkid: 4326 },
+          };
+          // Same hidden-tab rule as selectByPid: a background tab runs no
+          // animation frames, so a goTo there never settles.
+          if (document.hidden) view.extent = target;
+          else view.goTo({ target }).catch(() => {});
+        }
+      }
+      return f;
+    }
+
     async function generate() {
       if (!facts || busy) return;
       const apiKey = getKey();
@@ -3266,7 +3964,7 @@
         await streamReport({
           apiKey,
           model: modelSelect.value,
-          system: SYSTEM_PROMPT,
+          system: facts.multi ? SYSTEM_PROMPT + SYSTEM_PROMPT_MULTI : SYSTEM_PROMPT,
           user: buildUserMessage(facts, ownerCb.checked),
           signal: abortCtl.signal,
           onText: chunk => {
@@ -3311,7 +4009,10 @@
     // cannot deliver; the tooltip and the note beside the button say so.
 
     function shareUrl() {
-      const pid = facts && facts.identity && facts.identity.pid;
+      if (!facts) return null;
+      // A multi-parcel selection shares as ?pid=A,B,C — the same deep link,
+      // reopened by selectPids() into the same selection.
+      const pid = facts.multi ? facts.multi.pids.join(",") : facts.identity && facts.identity.pid;
       if (!pid) return null;
       const u = new URL(window.location.href);
       u.hash = "";
@@ -3323,8 +4024,12 @@
     shareBtn.addEventListener("click", async () => {
       const url = shareUrl();
       if (!url) return;
-      const title = "Parcel " + facts.identity.pid;
-      const where = [facts.identity.address, facts.identity.city].filter(Boolean).join(", ");
+      const title = facts.multi
+        ? `Parcels ${facts.multi.pids.join(", ")}`
+        : "Parcel " + facts.identity.pid;
+      const where = facts.multi
+        ? [`${facts.multi.count} parcels`, facts.identity.city].filter(Boolean).join(", ")
+        : [facts.identity.address, facts.identity.city].filter(Boolean).join(", ");
       // navigator.share is the right thing on a phone and needs the gesture we
       // are already inside. It rejects with AbortError when the user dismisses
       // the sheet — that is not a failure and must not fall through to a
@@ -3405,11 +4110,18 @@
         docxBtn.textContent = "Building…";
         setStatus("");
         buildPrintDoc(printRoot, facts, lastReport ? lastReport.html : null, meta, maps);
-        const pid = facts.identity.pid || "parcel";
-        const blob = await window.NRPCDocx.docxFromPrintRoot(printRoot, "Parcel Report " + pid);
+        const slug = facts.multi
+          ? facts.multi.count <= 3
+            ? facts.multi.pids.join("+")
+            : `${facts.multi.count}-parcels`
+          : facts.identity.pid || "parcel";
+        const docTitle = facts.multi
+          ? `Parcels Report ${facts.multi.pids.join(", ")}`
+          : "Parcel Report " + (facts.identity.pid || "parcel");
+        const blob = await window.NRPCDocx.docxFromPrintRoot(printRoot, docTitle);
         const a = document.createElement("a");
         a.href = URL.createObjectURL(blob);
-        a.download = `parcel-report-${pid}.docx`;
+        a.download = `${facts.multi ? "parcels-report" : "parcel-report"}-${slug}.docx`;
         document.body.appendChild(a);
         a.click();
         setTimeout(() => {
@@ -3499,6 +4211,23 @@
         }
         if (claimed) return "intercepted";
       }
+      // A modifier key adds to the selection whatever the mode; the header
+      // toggle adds for anyone without a keyboard. ArcGIS wraps the DOM event
+      // as event.native. Either way there must already be a selection to add
+      // to — a modified first click is a plain selection.
+      const native = event && event.native;
+      const modified = !!(native && (native.ctrlKey || native.metaKey || native.shiftKey));
+      if ((addMode || modified) && selection.length) {
+        beginAdd();
+        try {
+          const feature = await timed("parcel", () => fetchParcelAt(lon, lat));
+          await toggleParcelFeature(feature, lon, lat);
+        } catch (e) {
+          say("Could not load the parcel: " + e.message, "warn", 4000);
+          setStatus("");
+        }
+        return "parcel-added";
+      }
       await loadParcel(lon, lat);
       return "parcel";
     }
@@ -3544,6 +4273,15 @@
       },
       showReport: md => showReport(md, modelSelect.value),
       selectByPid,
+      // Multi-parcel test surface: build a selection without a keyboard or a
+      // map gesture, and read back what is selected.
+      selectPids,
+      addByPid: pid => selectByPid(pid, { add: true }),
+      removeParcel,
+      setAddMode,
+      get selection() {
+        return selection.map(e => e.pid);
+      },
       shareUrl,
       // Build the .docx and hand it back rather than downloading it, so a test
       // can open the bytes without driving a browser download.
@@ -3599,6 +4337,12 @@
       lastPoint: () => (lastPoint ? { ...lastPoint } : null),
       // The third selection path: by PID, from a search result or a deep link.
       selectByPid,
+      // Several PIDs into one selection — the ?pid=A,B,C deep link.
+      selectPids,
+      // Multi-select state, for companion features that need to know.
+      isAddMode: () => addMode,
+      setAddMode,
+      selectedPids: () => selection.map(e => e.pid),
       // The parcel lookups the search box drives. They live here because this
       // file already owns PARCEL_BASE and its field names; main.js owns the UI
       // and knows nothing about the service.

@@ -2855,12 +2855,18 @@ require([
 
     function applyDeepLink() {
       const params = new URLSearchParams(window.location.search);
-      const pid = (params.get("pid") || "").replace(/[^0-9]/g, "");
+      // ?pid= takes one PID or a comma-separated list — the multi-parcel
+      // Share button writes the list form, and both reopen the selection.
+      const pids = (params.get("pid") || "")
+        .split(",")
+        .map(s => s.replace(/[^0-9]/g, ""))
+        .filter(Boolean);
       const city = params.get("city");
       const watershed = params.get("watershed");
 
-      if (pid && prApiSearch) {
-        prApiSearch.selectByPid(pid);
+      if (pids.length && prApiSearch) {
+        if (pids.length > 1 && prApiSearch.selectPids) prApiSearch.selectPids(pids);
+        else prApiSearch.selectByPid(pids[0]);
       }
 
       const wanted = watershed || city;
