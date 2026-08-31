@@ -1080,7 +1080,9 @@ window.NRPCReportMaps = (function () {
     ctx.font = `${Math.round(34 * S)}px Georgia, "Times New Roman", serif`;
     ctx.fillStyle = "#444";
     ctx.fillText(
-      s.subtitle || `${where} · PID ${id.pid || "unknown"}` + (id.zip ? ` · ${id.zip}` : ""),
+      s.subtitle ||
+        `${where} · ${facts.multi ? "PIDs" : "PID"} ${id.pid || "unknown"}` +
+          (id.zip ? ` · ${id.zip}` : ""),
       pad,
       pad + Math.round(52 * S)
     );
@@ -1536,7 +1538,7 @@ window.NRPCReportMaps = (function () {
   }
 
   /** Plate 2. The model's own five breaks, then the two Met Council classes. */
-  function plateTwoLegend() {
+  function plateTwoLegend(facts) {
     const out = MODEL_BREAKS.map(b => ({
       label: b.label,
       fill: `rgba(${b.rgb[0]},${b.rgb[1]},${b.rgb[2]},0.72)`,
@@ -1553,7 +1555,7 @@ window.NRPCReportMaps = (function () {
       stroke: `rgb(${ECO_SYM.sensitive.rgb.join(",")})`,
       dash: true,
     });
-    out.push({ label: "Subject parcel", fill: "rgba(0,0,0,0)", stroke: "rgb(20,60,200)" });
+    out.push({ label: subjectLabel(facts), fill: "rgba(0,0,0,0)", stroke: "rgb(20,60,200)" });
     return out;
   }
 
@@ -1798,7 +1800,7 @@ window.NRPCReportMaps = (function () {
             "Hennepin County Parcel Prioritization Model, the layer's own five class breaks · " +
             "Metropolitan Council ecologically significant and sensitive areas",
           layout: "full",
-          legend: { title: "Overall Value (model score)", entries: plateTwoLegend() },
+          legend: { title: "Overall Value (model score)", entries: plateTwoLegend(facts) },
           table: rows.length ? { title: "The parcel's model scores", rows } : null,
           notes: [
             `Every parcel in frame is shaded by its Overall Value in the Hennepin County Parcel ` +

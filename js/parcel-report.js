@@ -1658,6 +1658,8 @@
       : null;
 
     return {
+      // Tells the prose helpers (scopeWords) to say "these parcels".
+      multiParcel: true,
       nearest,
       nearestLimit: OPP_NEAREST_N,
       widen,
@@ -2328,9 +2330,10 @@
   // "…within 250 m" when the adjacency tier is not in play.
   function scopeWords(opps, bufferM) {
     const m = (opps && opps.bufferMetres) || bufferM;
-    return adjacencyWorked(opps)
-      ? `on this parcel, on the parcels touching it, or within ${m} m`
-      : `within ${m} m`;
+    if (!adjacencyWorked(opps)) return `within ${m} m`;
+    return opps && opps.multiParcel
+      ? `on these parcels, on the parcels touching them, or within ${m} m`
+      : `on this parcel, on the parcels touching it, or within ${m} m`;
   }
 
   function opportunitySummary(opps, bufferM) {
@@ -3169,18 +3172,24 @@
         el("p", { className: "pr-print-lead", textContent: opportunityEmptyText(opps) })
       );
     } else {
-      oppSection.append(
-        el("p", {
-          className: "pr-print-lead",
-          textContent:
-            opportunitySummary(opps, f.contextBufferMetres) +
-            ", contributed by " +
-            (opps.organizations.length
-              ? opps.organizations.join(", ")
-              : "organisations not named on the record") +
-            ".",
-        })
-      );
+      // When the tiers are empty, everything printed below came from the
+      // widened search and the orgs on the page are the nearest rows' — the
+      // old lead said "none …, contributed by organisations not named on the
+      // record" under three fully attributed cards, which read as a
+      // contradiction.
+      const widenOrgs = [...new Set((opps.nearest || []).map(r => r.organization).filter(Boolean))];
+      const lead = opps.items.length
+        ? opportunitySummary(opps, f.contextBufferMetres) +
+          ", contributed by " +
+          (opps.organizations.length
+            ? opps.organizations.join(", ")
+            : "organisations not named on the record") +
+          "."
+        : opportunitySummary(opps, f.contextBufferMetres) +
+          ". The contributions below were found by the widened search" +
+          (widenOrgs.length ? ", contributed by " + widenOrgs.join(", ") : "") +
+          ".";
+      oppSection.append(el("p", { className: "pr-print-lead", textContent: lead }));
       // A sub-heading, not just a bolder paragraph: js/docx-writer.js maps h3
       // to Heading2, so this is also what gives the DOCX a real outline entry
       // under "Shared opportunities".
