@@ -1023,3 +1023,88 @@ name, no address, no `@` anywhere in the payload.
   the contributions and the numbers all painted at a few per cent opacity —
   every graphic present, mid-fade, captured. There is now a `SETTLE_MS` (400 ms)
   real-time wait first. Costs an export ~1.6 s over four captures.
+
+---
+
+## Multi-parcel selection (branch `multi-parcel`)
+
+Bryan, 31 Aug: *"update the features so that it is possible to select multiple
+parcels at a time and get a Parcels report, so it works with single or multiple
+select."* The motivating case is real: Leslie Yetka (Minnetonka) asked on
+28 Aug for PIDs 1011722310001 AND 1011722310002 "together", and the answer was
+two separate reports and an apology.
+
+### The selection model
+
+`selection` is an array of `{pid, feature, facts, point}`. One entry is the
+single-parcel app, unchanged; the report facts ARE that entry's facts object.
+More than one and the report facts are `combineFacts(selection)` — a derived
+object with the same shape plus `multi` and `parcels`, so nearly everything
+downstream reads it without knowing.
+
+Every way in ends at `finishSelection()`: outlines redrawn, facts derived,
+panel rendered, listeners told. The paths:
+
+| Gesture | Path | Result |
+|---|---|---|
+| plain click / mobile locate / search / `?pid=A` | `selectParcelFeature()` | replaces the selection |
+| Ctrl/Cmd/Shift+click | `handleMapClick` → `toggleParcelFeature()` | adds; on a selected parcel, removes |
+| "+ Add parcels" header toggle + any click or search | same toggle path | same, for trackpads and phones |
+| chip × in the panel | `removeParcel(pid)` | removes one |
+| `?pid=A,B,C` / Share | `selectPids()` | replaces with the whole list, zooms once to the union |
+
+A modified first click is a plain selection (`selection.length` must be > 0 to
+add). The header toggle serves mobile because `#pr-header` IS the sheet header.
+
+### What "combined" means, per section
+
+- **Totals** (acres, market/land/building value, tax): sums; each value total
+  carries a `valueComplete` flag and prints "incomplete" when any parcel has
+  no figure, so a null can never silently understate a sum.
+- **Model**: `facts.model` is null ON PURPOSE. The county model ranks parcels
+  one at a time; a blended rank would be a number the county never published.
+  Each parcel's rank/scores print in its own table, and plate 2 labels every
+  parcel with its own score.
+- **Context**: per-parcel results merged by layer; named features dedupe
+  across parcels, so the park near both parcels is one park. Counts are floors
+  where features carry no name.
+- **Shared opportunities**: rows dedupe by their stable id (`layer.key +
+  OBJECTID`). The best tier wins — ON_PARCEL for any selected parcel beats
+  "nearby" seen from another — and the kept distance is the minimum, i.e.
+  "to the nearest selected parcel". `nearest` is recomputed and renumbered
+  across the whole set on CLONES, so each per-parcel facts object keeps its
+  own 1-5 for its own section. Adjacent parcels that are themselves selected
+  drop out of the merged `mapGeometry.adjacentParcels` and `adjacency.pids` —
+  they are subjects now, not neighbours.
+- **Prompt**: per-parcel payloads exactly as a single request builds them
+  (same owner opt-out, same contributor stripping — both guards untouched),
+  plus a `combined` block; `SYSTEM_PROMPT_MULTI` is appended to the system
+  prompt and tells the model to write ONE brief, use the merged nearest list,
+  and never invent a blended rank.
+- **Print/DOCX**: "Parcels Report", a "The selection" table, then one
+  county-record table per parcel via the shared `parcelRecordTable()` helper
+  (single and multi print the same rows through the same function, so they
+  cannot drift). Filename: `parcels-report-<pid>+<pid>.docx`, or
+  `<n>-parcels` past three.
+
+### Verified 2026-08-31, headless, on Leslie's pair
+
+`make-multi-report.py --select-only` (chief-of-staff task dir 2026-W36/…/00-parcels-multiselect):
+selection of 2 assembles in ~25 s; totals 23.06 + 7.28 = 30.34 acres; per-parcel
+ranks 3,642 and 4,239 with `model: null` at the top; merged nearest keeps the
+closer of the two per-parcel distances for the same contribution (851 m via
+parcel …002 where …001 alone measured 926 m) and renumbers 1-3; the single-PID
+run still produces plain single-parcel facts (`multi` absent).
+
+### Gotchas
+
+- `combineFacts()` concatenates `parcelRings` into one multi-ring polygon.
+  Everything in report-maps.js that framed "the parcel" frames the union, and
+  the eco plate's mean-point label would land between parcels — which is why
+  the multi path labels each parcel from `facts.parcels` instead.
+- The chips and the add toggle live OUTSIDE `factsBox`, so they survive
+  `beginAdd()` — which does NOT clear the panel the way `beginLoad()` does; it
+  only aborts/clears the brief, because a brief over two parcels is not the
+  brief over three.
+- `selectByPid()` honours add mode by default (`opts.add` overrides), which is
+  what lets the search box build a selection with zero new code in main.js.
