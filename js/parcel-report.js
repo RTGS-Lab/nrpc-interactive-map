@@ -3109,6 +3109,10 @@
         section(
           `Parcel ${i + 1} of ${f.multi.count} — PID ${pf.identity.pid || "unknown"}`,
           parcelRecordTable(pf),
+          // This parcel's own aerial figure, captured per parcel by
+          // report-maps.js on a multi selection. Null-safe: a failed capture
+          // just leaves the section without it.
+          figureFor("facts-" + (pf.identity.pid || `parcel-${i + 1}`)),
           el("h3", { textContent: "Prioritization model" }),
           ...modelBits
         );

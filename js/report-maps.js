@@ -256,7 +256,11 @@ window.NRPCReportMaps = (function () {
       hiddenContainer.style.width = w + "px";
       hiddenContainer.style.height = h + "px";
       // Let the view pick the new container size up before anything is drawn.
-      await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+      // Hidden-tab safe: rAF does not fire there — see paintSettled().
+      await new Promise(r => {
+        if (document.hidden) return setTimeout(r, 60);
+        requestAnimationFrame(() => requestAnimationFrame(r));
+      });
     }
     return hiddenView;
   }
@@ -772,6 +776,8 @@ window.NRPCReportMaps = (function () {
     const h = o.height || INLINE_H;
     const t0 = performance.now();
     try {
+      // A hidden tab cannot capture at all — wait for it, don't hang in it.
+      await whenVisible(o.say);
       const m = await loadModules();
       const built = buildGraphics(m, facts, kind, w / INLINE_W);
       if (!built) return null;
@@ -861,6 +867,42 @@ window.NRPCReportMaps = (function () {
   // costs an export about 1.6 s; a figure that argues nothing costs more.
   const SETTLE_MS = 400;
 
+  // The paint wait, hidden-tab safe. requestAnimationFrame NEVER fires in a
+  // hidden tab, so an export whose tab is backgrounded mid-run — or driven
+  // from a background tab — used to park here forever (measured 2026-08-31:
+  // capture stuck between goTo and takeScreenshot, document.hidden true, no
+  // error, no timeout). Same class of bug as the hidden-tab view.goTo fix in
+  // parcel-report.js. With no frames being produced there is no fade to wait
+  // out, so plain time is the whole wait.
+  function paintSettled(resolve) {
+    setTimeout(() => {
+      if (document.hidden) return resolve();
+      requestAnimationFrame(() => requestAnimationFrame(resolve));
+    }, SETTLE_MS);
+  }
+
+  /**
+   * Resolve once this tab is visible. A hidden tab renders no frames at all —
+   * not for requestAnimationFrame and not for takeScreenshot(), which waits
+   * on a rendered frame internally — so a capture attempted while hidden
+   * cannot finish, full stop. Verified 2026-08-31: an export driven in a
+   * background tab sat inside the first capture indefinitely with no error.
+   * Rather than hang silently, every capture waits HERE, says so through
+   * onProgress, and resumes the moment the user comes back to the tab.
+   */
+  function whenVisible(say) {
+    if (!document.hidden) return Promise.resolve();
+    if (say) say("Waiting for this tab to be visible — maps can only be captured while it is…");
+    return new Promise(resolve => {
+      const onChange = () => {
+        if (document.hidden) return;
+        document.removeEventListener("visibilitychange", onChange);
+        resolve();
+      };
+      document.addEventListener("visibilitychange", onChange);
+    });
+  }
+
   /**
    * Resolve when every FeatureLayer on the view has finished fetching and
    * drawing, or when the timeout gives up on it.
@@ -908,7 +950,7 @@ window.NRPCReportMaps = (function () {
         if (handle) handle.remove();
         handle = null;
         clearTimeout(timer);
-        setTimeout(() => requestAnimationFrame(() => requestAnimationFrame(resolve)), SETTLE_MS);
+        paintSettled(resolve);
       };
       const timer = setTimeout(done, timeoutMs);
       if (!view.updating) return done();
@@ -1663,6 +1705,7 @@ window.NRPCReportMaps = (function () {
         width: INLINE_W,
         height: INLINE_H,
         marginFraction: step.margin,
+        say,
       });
       if (!shot) {
         failures.push(step.kind);
@@ -1674,6 +1717,43 @@ window.NRPCReportMaps = (function () {
         caption: step.caption(),
         source: `${DATA_ATTRIB}. ${ESRI_ATTRIB}. Captured ${shot.capturedAt.toLocaleString()}.`,
       });
+    }
+
+    // A multi-parcel report gets each parcel's own aerial figure after the
+    // combined one — Bryan, 31 Aug: "maps with both parcels together, then
+    // separately for each." Each per-parcel facts object IS a single parcel's
+    // facts, so the ordinary facts capture draws it; only the kind is renamed
+    // so buildPrintDoc can place each figure in that parcel's own section.
+    // The context and adjacency figures stay combined-only: they argue about
+    // the selection, and per-parcel copies would repeat the argument N times.
+    if (facts.multi && facts.parcels) {
+      const letters = "abcdefghijklmnopqrstuvwxyz";
+      for (let i = 0; i < facts.parcels.length; i++) {
+        const pf = facts.parcels[i];
+        const pid = (pf.identity && pf.identity.pid) || `parcel-${i + 1}`;
+        say(`Preparing maps… parcel ${i + 1} of ${facts.parcels.length}`);
+        const shot = await capture(pf, "facts", {
+          width: INLINE_W,
+          height: INLINE_H,
+          marginFraction: 0.35,
+          say,
+        });
+        if (!shot) {
+          failures.push(`facts for PID ${pid}`);
+          continue;
+        }
+        figures.push({
+          ...shot,
+          kind: "facts-" + pid,
+          title: `Figure 1${letters[i] || String(i + 1)}. Parcel ${i + 1} of ${facts.parcels.length}`,
+          caption:
+            `PID ${pid}` +
+            (pf.identity && pf.identity.address ? ` — ${pf.identity.address}` : "") +
+            (pf.land && pf.land.parcelAcres ? `, ${pf.land.parcelAcres} acres` : "") +
+            `, outlined on aerial imagery.`,
+          source: `${DATA_ATTRIB}. ${ESRI_ATTRIB}. Captured ${shot.capturedAt.toLocaleString()}.`,
+        });
+      }
     }
 
     // ── The three plates ──────────────────────────────────────────────────
@@ -1709,6 +1789,7 @@ window.NRPCReportMaps = (function () {
         width: Math.min(win.w, MAX_CAPTURE_PX),
         height: Math.min(win.h, MAX_CAPTURE_PX),
         timeoutMs: 20000,
+        say,
         ...(capOpts || {}),
       });
       if (!shot) {
@@ -1864,6 +1945,7 @@ window.NRPCReportMaps = (function () {
         // the case this exists for, and it is a property of the data, not
         // something that can be decided in advance.
         const probe = await capture(facts, "sites", {
+          say,
           width: 1200,
           height: 900,
           marginFraction: 0.14,
@@ -1877,6 +1959,7 @@ window.NRPCReportMaps = (function () {
           const pw = parcelGroundWidthM(facts);
           if (pw && frameW && pw / frameW < INSET_TRIGGER) {
             const ishot = await capture(facts, "plate", {
+              say,
               width: 900,
               height: 900,
               marginFraction: 0.3,

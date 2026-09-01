@@ -1108,3 +1108,34 @@ run still produces plain single-parcel facts (`multi` absent).
   brief over three.
 - `selectByPid()` honours add mode by default (`opts.add` overrides), which is
   what lets the search box build a selection with zero new code in main.js.
+
+### Map exports in a hidden tab, and per-parcel figures (31 Aug, after Bryan's test)
+
+Bryan: *"Map exports don't appear to be working with multiple parcels. These
+should have maps with both parcels together, then separately for each."* Two
+changes came out of reproducing that:
+
+- **A hidden tab cannot capture maps, and used to hang forever trying.**
+  Reproduced live 2026-08-31: an export driven in a background tab parked
+  inside the FIRST capture — after `goTo` resolved, before `takeScreenshot`
+  started — with no error and no timeout. Two causes, same root:
+  `whenStable()`'s settle wait ended in `requestAnimationFrame`, which never
+  fires in a hidden tab, and `takeScreenshot()` itself waits on a rendered
+  frame, which a hidden tab never produces. The settle wait now falls back to
+  plain time when hidden (`paintSettled()`), and every capture first awaits
+  `whenVisible()` — the status line says "Waiting for this tab to be
+  visible…" and the run resumes on `visibilitychange`. So an export whose tab
+  is backgrounded mid-run finishes when the user comes back instead of dying
+  silently. This bug was not multi-specific — a single-parcel export
+  backgrounded mid-run hung the same way; multi runs just take long enough
+  (5-6 captures, minutes) that tabbing away is how they get used.
+- **Per-parcel figures on a multi report.** After the combined Figure 1, a
+  multi run captures each parcel's own aerial figure (`kind:
+  "facts-<pid>"`, titled Figure 1a/1b/…), and `buildPrintDoc()` places each
+  in that parcel's own section, between the county-record table and the model
+  table. Context/adjacency figures and the three plates stay combined-only:
+  they argue about the selection, and N copies would repeat the argument.
+
+Caching note for anyone testing on the 8768 server: python http.server plus
+Chrome's memory cache means a plain reload can keep running the OLD js.
+`fetch(url, {cache:"reload"})` each script, then reload.
