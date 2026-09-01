@@ -2892,6 +2892,9 @@
       if (!fig) return null;
       const node = el("figure", { className: "pr-print-figure" });
       const img = el("img", { className: "pr-print-figure-img" });
+      // Ask for a synchronous decode at paint time — the print raster is the
+      // first paint these images ever get. See rasterizePrintImages().
+      img.decoding = "sync";
       img.src = fig.dataUrl;
       img.alt = fig.title + " — " + fig.caption;
       img.setAttribute("data-nrpc-figure", kind);
@@ -3326,6 +3329,7 @@
     plateList.forEach(pl => {
       const plate = el("section", { className: "pr-print-plate" });
       const img = el("img", { className: "pr-print-plate-img" });
+      img.decoding = "sync";
       img.src = pl.dataUrl;
       img.alt = pl.alt || "Parcel map plate.";
       img.setAttribute("data-nrpc-figure", "plate-" + pl.name);
@@ -4156,6 +4160,57 @@
       }
     });
 
+    /**
+     * Decode every image in the print document BEFORE window.print().
+     *
+     * #pr-print is display:none on screen, so nothing in it has ever been
+     * painted, and Chrome's print raster does not wait for the async decode
+     * it triggers on first meeting an image — a data-URI map it has never
+     * decoded prints as an EMPTY BOX. Reproduced minimally 2026-08-31
+     * (scratchpad print-blank-repro): same page, same bytes — the undecoded
+     * img prints blank, the decode()d one prints. Every figure and plate in
+     * Bryan's multi-parcel PDF printed blank exactly this way.
+     * decode() loads the bytes into the image cache regardless of display,
+     * so the print then paints them like any other content.
+     */
+    /**
+     * Decode is necessary but not sufficient: Chrome's decoded-image cache
+     * can EVICT under the memory pressure of a report that carries eight
+     * multi-megapixel data-URI images, and an evicted image prints blank
+     * again. A canvas's bitmap is part of the DOM — nothing can evict it —
+     * so each print image is drawn into a canvas that takes its place and
+     * its classes (the print CSS is class-selected, so layout is identical).
+     * The DOCX path is untouched: it rebuilds #pr-print from scratch with
+     * fresh <img> nodes and reads their src bytes.
+     */
+    async function rasterizePrintImages() {
+      // Raced against a deadline: decode() has been seen to never settle in
+      // some environments, and a stall must degrade to today's behaviour
+      // (print anyway), never wedge the export.
+      const deadline = ms => new Promise(r => setTimeout(r, ms));
+      for (const im of [...printRoot.querySelectorAll("img")]) {
+        try {
+          if (im.decode) await Promise.race([im.decode().catch(() => {}), deadline(10000)]);
+          const w = im.naturalWidth;
+          const h = im.naturalHeight;
+          if (!w || !h) continue; // undecodable — leave the img and hope
+          const c = document.createElement("canvas");
+          c.width = w;
+          c.height = h;
+          c.getContext("2d").drawImage(im, 0, 0);
+          c.className = im.className;
+          for (const a of im.getAttributeNames()) {
+            if (a !== "src" && a !== "class" && a !== "width" && a !== "height") {
+              c.setAttribute(a, im.getAttribute(a));
+            }
+          }
+          im.replaceWith(c);
+        } catch (e) {
+          /* leave this one as an img — a decoded img still usually prints */
+        }
+      }
+    }
+
     exportBtn.addEventListener("click", async () => {
       if (!facts || !lastReport) return;
       const label = exportBtn.textContent;
@@ -4164,12 +4219,14 @@
       let maps = null;
       try {
         maps = await prepareMaps(s => setStatus(s, "ok"));
+        buildPrintDoc(printRoot, facts, lastReport.html, lastReport, maps);
+        exportBtn.textContent = "Preparing images…";
+        await rasterizePrintImages();
       } finally {
         exportBtn.disabled = false;
         exportBtn.textContent = label;
         setStatus("");
       }
-      buildPrintDoc(printRoot, facts, lastReport.html, lastReport, maps);
       // The class arms the print stylesheet. It stays on until the report is
       // replaced, so a plain Ctrl+P after an export prints the report too —
       // and before any export, Ctrl+P still prints the map as it always did.
@@ -4308,6 +4365,9 @@
         if (!facts || !lastReport) return false;
         const maps = withMaps === false ? null : await prepareMaps(() => {});
         buildPrintDoc(printRoot, facts, lastReport.html, lastReport, maps);
+        // Same rasterization the export button does — a print taken without
+        // it paints every never-displayed image as an empty box.
+        await rasterizePrintImages();
         document.body.classList.add("pr-print-ready");
         return true;
       },

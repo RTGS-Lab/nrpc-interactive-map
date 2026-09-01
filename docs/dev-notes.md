@@ -1139,3 +1139,45 @@ changes came out of reproducing that:
 Caching note for anyone testing on the 8768 server: python http.server plus
 Chrome's memory cache means a plain reload can keep running the OLD js.
 `fetch(url, {cache:"reload"})` each script, then reload.
+
+### Why the printed PDF's maps were blank (31 Aug, Bryan's second report)
+
+Bryan: *"None of the maps are generating in the PDF. They show up blank."*
+The DOCX (and LibreOffice PDFs made from it) always had the maps; only
+"Export as PDF" — `window.print()` — lost them. Two stacked causes, both in
+Chrome's print pipeline, both reproduced:
+
+1. **An image that has never been decoded prints as an empty box.**
+   `#pr-print` is `display:none` on screen, so nothing in it has ever been
+   painted, and the print raster does not wait for the async decode it
+   triggers on first meeting a data-URI image. Minimal repro
+   (chief-of-staff scratchpad, `print-blank-repro.html`): same page, same
+   bytes — the undecoded `<img>` prints blank, the `decode()`d one prints.
+2. **`decode()` is not sufficient at this document's size.** The decoded-
+   image cache can evict under the memory pressure of eight multi-megapixel
+   data URIs, and an evicted image prints blank again (observed: first
+   plate blank while later ones printed, varying by run).
+
+The fix is `rasterizePrintImages()` in js/parcel-report.js: before
+`window.print()`, every print `<img>` is decoded (raced against a 10 s
+deadline — decode() has been seen to stall — a stall degrades to printing
+anyway) and then drawn into a `<canvas>` that takes its place and its
+classes. A canvas's bitmap is part of the DOM; nothing can evict it. The
+print CSS is class-selected, so layout is identical. The DOCX path is
+untouched — it rebuilds `#pr-print` with fresh `<img>` nodes and reads
+their bytes.
+
+Verified end-to-end 2026-08-31 over CDP `Page.printToPDF` (the same
+renderer Save-as-PDF uses) against the real app, real captures, Leslie's
+pair: 10 pages, every figure and plate present.
+
+**Trade-off, known:** canvases print as lossless bitmaps, so the browser
+print PDF is now ~59 MB where the blank-mapped one was small. The
+emailable PDF remains LibreOffice's render of the DOCX (~6 MB, same
+document). If browser-print size ever matters, that is a reason for the
+server-side PDF in the modernization proposals, not for going back to imgs.
+
+**Testing note:** headless + `--virtual-time-budget` is NOT a faithful
+print pipeline (prints early, stalls `decode()`); use headless=new + CDP
+with no virtual time. And a stray Chrome holding the debug port makes every
+later run silently attach to the zombie — kill by `user-data-dir` first.
