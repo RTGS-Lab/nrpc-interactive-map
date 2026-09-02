@@ -1,0 +1,61 @@
+# Rendered to /etc/nginx/conf.d/default.conf at container start with ${PORT}
+# substituted from the environment. Cloud Run sets PORT; the Dockerfile
+# defaults it to 8080 so `docker run` works with no -e.
+
+server {
+    listen       ${PORT};
+    listen       [::]:${PORT};
+    server_name  _;
+
+    root  /usr/share/nginx/html;
+    index index.html;
+
+    # Cloud Run terminates TLS in front of us and logs to stdout/stderr.
+    access_log /dev/stdout;
+    error_log  /dev/stderr warn;
+
+    # Cloud Run's HTTP/1 proxy already gzips, but doing it here shrinks the
+    # 153KB parcel-report.js and the 67KB stylesheet on the hop that matters.
+    gzip              on;
+    gzip_types        text/css application/javascript application/json image/svg+xml;
+    gzip_min_length   1024;
+
+    # This is a DRAFT service. Keep it out of search results; it is a working
+    # demo of unverified parcel data, not a published product.
+    add_header X-Robots-Tag "noindex, nofollow" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+
+    # A liveness path that does not depend on the app. Cloud Run's default
+    # probe is TCP, but this makes `curl` and any future HTTP probe cheap.
+    location = /healthz {
+        access_log off;
+        default_type text/plain;
+        return 200 "ok\n";
+    }
+
+    location = /robots.txt {
+        access_log off;
+        default_type text/plain;
+        return 200 "User-agent: *\nDisallow: /\n";
+    }
+
+    # The app is one page; js/ and styles.css are versioned by the deploy, not
+    # by a hash in the filename, so they must not be cached across revisions.
+    location ~* \.(js|css)$ {
+        add_header Cache-Control "no-cache, must-revalidate" always;
+    }
+
+    location = /index.html {
+        add_header Cache-Control "no-cache, must-revalidate" always;
+    }
+
+    # No client-side router here: the app is one page and its only "routes"
+    # are query params (?mobile=1, ?dev-print=1). An SPA fallback to
+    # index.html would answer 200 for /deploy/Dockerfile and every other path
+    # .dockerignore kept out, which makes an excluded file look present.
+    # A miss is a miss.
+    location / {
+        try_files $uri $uri/ =404;
+    }
+}

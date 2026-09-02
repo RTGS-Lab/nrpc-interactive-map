@@ -1,0 +1,43 @@
+# Build context = the repo root. Everything not needed to SERVE the app stays
+# out of the image, and the two things that must never leave this box are
+# listed first.
+
+# ── Secrets ───────────────────────────────────────────────────────────────
+# Bryan's real Google Street View key lives here (gitignored in the repo).
+# The Dockerfile writes js/config.example.js over js/config.js instead.
+js/config.js
+.dev-certs/
+*.pem
+*.key
+.env
+.env.*
+
+# ── Repo plumbing ─────────────────────────────────────────────────────────
+.git
+.gitignore
+.github/
+
+# ── Dev-only pages and tooling ────────────────────────────────────────────
+# phone.html and mobile-harness.html frame the app in an iframe for viewport
+# testing; serve-mobile.sh is the local HTTPS dev server. None belong on a
+# public draft.
+phone.html
+mobile-harness.html
+serve-mobile.sh
+docs/
+README.md
+
+# ── The deploy set itself ─────────────────────────────────────────────────
+# nginx.conf.template is COPYed explicitly by path, so the rest of deploy/
+# does not need to be in the image.
+deploy/deploy.sh
+deploy/service.yaml
+deploy/README.md
+
+# ── Junk ──────────────────────────────────────────────────────────────────
+**/.DS_Store
+**/__pycache__/
+**/*.pyc
+**/node_modules/
+*.log
+*.swp

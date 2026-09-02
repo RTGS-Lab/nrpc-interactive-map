@@ -1,0 +1,68 @@
+# Declarative equivalent of the deploy.sh flags, for
+#   gcloud run services replace deploy/service.yaml \
+#     --project con000000109891-henn-carbon --region europe-west1
+#
+# deploy.sh is the path to prefer — it builds, smoke-tests and pushes first.
+# This file exists so the service's shape is reviewable as a diff, and so the
+# config can be restored after a hand-edit in the console.
+#
+# Substitute IMAGE_TAG before applying; `gcloud run services replace` does not
+# do variable expansion:
+#   sed "s/IMAGE_TAG/$(git rev-parse --short HEAD)/" deploy/service.yaml | \
+#     gcloud run services replace - --project ... --region ...
+#
+# Every value that is copied from the existing pull-parcels service is marked
+# [ref]; the rest is sized for a static site and marked [draft].
+apiVersion: serving.knative.dev/v1
+kind: Service
+metadata:
+  name: parcel-planner-draft
+  labels:
+    cloud.googleapis.com/location: europe-west1   # [ref]
+    draft: "true"                                 # [draft]
+    app: parcel-planner                           # [draft]
+  annotations:
+    run.googleapis.com/ingress: all               # [ref]
+spec:
+  template:
+    metadata:
+      annotations:
+        autoscaling.knative.dev/maxScale: "4"     # [draft] ref uses 100; a draft demo does not need it
+        autoscaling.knative.dev/minScale: "0"     # [draft] scale to zero — nobody pays for an idle draft
+        run.googleapis.com/startup-cpu-boost: "true"   # [ref]
+    spec:
+      containerConcurrency: 80                    # [ref]
+      timeoutSeconds: 300                         # [ref]
+      serviceAccountName: 603040657991-compute@developer.gserviceaccount.com  # [ref]
+      containers:
+        - name: parcel-planner-draft-1
+          # europe-west1-docker.pkg.dev/con000000109891-henn-carbon/cloud-run-source-deploy/parcel-planner-draft
+          image: europe-west1-docker.pkg.dev/con000000109891-henn-carbon/cloud-run-source-deploy/parcel-planner-draft:IMAGE_TAG
+          ports:
+            - name: http1
+              containerPort: 8080                 # [ref]
+          resources:
+            limits:
+              cpu: 1000m                          # [draft] ref uses 2000m/8Gi for a Postgres ETL; nginx needs neither
+              memory: 512Mi
+          env:
+            # Read by nginx's envsubst at container start. Cloud Run injects
+            # PORT itself; this is only the documented default.
+            - name: PORT
+              value: "8080"
+          # NO secrets, NO valueFrom, NO Secret Manager mounts. The Anthropic
+          # key and the Google Street View key are the user's, entered in the
+          # browser and held in that browser's localStorage.
+          startupProbe:                           # [ref] shape, shorter budget
+            tcpSocket:
+              port: 8080
+            failureThreshold: 3
+            periodSeconds: 5
+            timeoutSeconds: 5
+  traffic:
+    - percent: 100
+      latestRevision: true
+# NOT copied from the reference service, deliberately:
+#   run.googleapis.com/cloudsql-instances — pull-parcels talks to the project's
+#   Cloud SQL instance. This app has no database connection at all; every layer
+#   it reads is a public ArcGIS REST endpoint fetched by the browser.
