@@ -40,6 +40,9 @@
   <!-- One companion panel over the map at a time. Must load before the two
        panels that register with it. -->
   <script src="js/panel-exclusivity.js"></script>
+  <!-- Which model results layer the report reads (v1 today, V2 when published).
+       Must load before report-maps.js and parcel-report.js. -->
+  <script src="js/model-config.js"></script>
   <!-- The maps that go in the exported PDF and DOCX. Captured off-screen on a
        second MapView so the user's map never moves. -->
   <script src="js/report-maps.js"></script>

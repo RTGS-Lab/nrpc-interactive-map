@@ -48,7 +48,10 @@
 
   // Parcel Prioritization Model Results (Parcel View) — joins to PARCEL_BASE
   // on PID. Holds the seven model scores and the county-wide rank.
+  // URL comes from js/model-config.js (window.NRPC_MODEL) so v1 -> V2 is one
+  // edit; the v1 URL stays as the fallback if that file is not loaded.
   const MODEL_PARCEL =
+    (window.NRPC_MODEL && window.NRPC_MODEL.parcelUrl) ||
     "https://services.arcgis.com/8df8p0NlLFEShl0r/arcgis/rest/services/Hennepin_Suitability_Model_Results_parcel_detail/FeatureServer/97";
 
   // How far past the parcel boundary we look for context features.

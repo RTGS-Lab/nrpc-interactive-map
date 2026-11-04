@@ -126,7 +126,10 @@ window.NRPCReportMaps = (function () {
   // Hennepin County Parcel Prioritization Model results — the same service
   // js/parcel-report.js reads the seven scores and the rank from, so the fill
   // under the parcel and the number printed beside it are the same layer.
+  // URL comes from js/model-config.js (window.NRPC_MODEL) so v1 -> V2 is one
+  // edit; the v1 URL stays as the fallback if that file is not loaded.
   const MODEL_PARCEL =
+    (window.NRPC_MODEL && window.NRPC_MODEL.parcelUrl) ||
     "https://services.arcgis.com/8df8p0NlLFEShl0r/arcgis/rest/services/Hennepin_Suitability_Model_Results_parcel_detail/FeatureServer/97";
 
   // The model's OWN breaks, not ours. The service publishes a classBreaks
@@ -1892,8 +1895,13 @@ window.NRPCReportMaps = (function () {
               `carries, and that is what the legend shows.`,
           ],
           sources: [
-            "Model: Hennepin County Parcel Prioritization Model results (parcel detail), ArcGIS Online " +
-              "service Hennepin_Suitability_Model_Results_parcel_detail/97.",
+            "Model: " +
+              ((window.NRPC_MODEL && window.NRPC_MODEL.label) ||
+                "Hennepin County Parcel Prioritization Model results (parcel detail)") +
+              ", ArcGIS Online service " +
+              ((window.NRPC_MODEL && window.NRPC_MODEL.serviceName) ||
+                "Hennepin_Suitability_Model_Results_parcel_detail/97") +
+              ".",
             "Ecological areas: Metropolitan Council, via Met_Council_Data_Ecologically_Significant_Areas/106 " +
               "and Met_Council_Data_Ecologically_Sensitive_Areas/108.",
             DATA_ATTRIB,
