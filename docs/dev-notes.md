@@ -1023,3 +1023,161 @@ name, no address, no `@` anywhere in the payload.
   the contributions and the numbers all painted at a few per cent opacity —
   every graphic present, mid-fade, captured. There is now a `SETTLE_MS` (400 ms)
   real-time wait first. Costs an export ~1.6 s over four captures.
+
+---
+
+## Multi-parcel selection (branch `multi-parcel`)
+
+Bryan, 31 Aug: *"update the features so that it is possible to select multiple
+parcels at a time and get a Parcels report, so it works with single or multiple
+select."* The motivating case is real: Leslie Yetka (Minnetonka) asked on
+28 Aug for PIDs 1011722310001 AND 1011722310002 "together", and the answer was
+two separate reports and an apology.
+
+### The selection model
+
+`selection` is an array of `{pid, feature, facts, point}`. One entry is the
+single-parcel app, unchanged; the report facts ARE that entry's facts object.
+More than one and the report facts are `combineFacts(selection)` — a derived
+object with the same shape plus `multi` and `parcels`, so nearly everything
+downstream reads it without knowing.
+
+Every way in ends at `finishSelection()`: outlines redrawn, facts derived,
+panel rendered, listeners told. The paths:
+
+| Gesture | Path | Result |
+|---|---|---|
+| plain click / mobile locate / search / `?pid=A` | `selectParcelFeature()` | replaces the selection |
+| Ctrl/Cmd/Shift+click | `handleMapClick` → `toggleParcelFeature()` | adds; on a selected parcel, removes |
+| "+ Add parcels" header toggle + any click or search | same toggle path | same, for trackpads and phones |
+| chip × in the panel | `removeParcel(pid)` | removes one |
+| `?pid=A,B,C` / Share | `selectPids()` | replaces with the whole list, zooms once to the union |
+
+A modified first click is a plain selection (`selection.length` must be > 0 to
+add). The header toggle serves mobile because `#pr-header` IS the sheet header.
+
+### What "combined" means, per section
+
+- **Totals** (acres, market/land/building value, tax): sums; each value total
+  carries a `valueComplete` flag and prints "incomplete" when any parcel has
+  no figure, so a null can never silently understate a sum.
+- **Model**: `facts.model` is null ON PURPOSE. The county model ranks parcels
+  one at a time; a blended rank would be a number the county never published.
+  Each parcel's rank/scores print in its own table, and plate 2 labels every
+  parcel with its own score.
+- **Context**: per-parcel results merged by layer; named features dedupe
+  across parcels, so the park near both parcels is one park. Counts are floors
+  where features carry no name.
+- **Shared opportunities**: rows dedupe by their stable id (`layer.key +
+  OBJECTID`). The best tier wins — ON_PARCEL for any selected parcel beats
+  "nearby" seen from another — and the kept distance is the minimum, i.e.
+  "to the nearest selected parcel". `nearest` is recomputed and renumbered
+  across the whole set on CLONES, so each per-parcel facts object keeps its
+  own 1-5 for its own section. Adjacent parcels that are themselves selected
+  drop out of the merged `mapGeometry.adjacentParcels` and `adjacency.pids` —
+  they are subjects now, not neighbours.
+- **Prompt**: per-parcel payloads exactly as a single request builds them
+  (same owner opt-out, same contributor stripping — both guards untouched),
+  plus a `combined` block; `SYSTEM_PROMPT_MULTI` is appended to the system
+  prompt and tells the model to write ONE brief, use the merged nearest list,
+  and never invent a blended rank.
+- **Print/DOCX**: "Parcels Report", a "The selection" table, then one
+  county-record table per parcel via the shared `parcelRecordTable()` helper
+  (single and multi print the same rows through the same function, so they
+  cannot drift). Filename: `parcels-report-<pid>+<pid>.docx`, or
+  `<n>-parcels` past three.
+
+### Verified 2026-08-31, headless, on Leslie's pair
+
+`make-multi-report.py --select-only` (chief-of-staff task dir 2026-W36/…/00-parcels-multiselect):
+selection of 2 assembles in ~25 s; totals 23.06 + 7.28 = 30.34 acres; per-parcel
+ranks 3,642 and 4,239 with `model: null` at the top; merged nearest keeps the
+closer of the two per-parcel distances for the same contribution (851 m via
+parcel …002 where …001 alone measured 926 m) and renumbers 1-3; the single-PID
+run still produces plain single-parcel facts (`multi` absent).
+
+### Gotchas
+
+- `combineFacts()` concatenates `parcelRings` into one multi-ring polygon.
+  Everything in report-maps.js that framed "the parcel" frames the union, and
+  the eco plate's mean-point label would land between parcels — which is why
+  the multi path labels each parcel from `facts.parcels` instead.
+- The chips and the add toggle live OUTSIDE `factsBox`, so they survive
+  `beginAdd()` — which does NOT clear the panel the way `beginLoad()` does; it
+  only aborts/clears the brief, because a brief over two parcels is not the
+  brief over three.
+- `selectByPid()` honours add mode by default (`opts.add` overrides), which is
+  what lets the search box build a selection with zero new code in main.js.
+
+### Map exports in a hidden tab, and per-parcel figures (31 Aug, after Bryan's test)
+
+Bryan: *"Map exports don't appear to be working with multiple parcels. These
+should have maps with both parcels together, then separately for each."* Two
+changes came out of reproducing that:
+
+- **A hidden tab cannot capture maps, and used to hang forever trying.**
+  Reproduced live 2026-08-31: an export driven in a background tab parked
+  inside the FIRST capture — after `goTo` resolved, before `takeScreenshot`
+  started — with no error and no timeout. Two causes, same root:
+  `whenStable()`'s settle wait ended in `requestAnimationFrame`, which never
+  fires in a hidden tab, and `takeScreenshot()` itself waits on a rendered
+  frame, which a hidden tab never produces. The settle wait now falls back to
+  plain time when hidden (`paintSettled()`), and every capture first awaits
+  `whenVisible()` — the status line says "Waiting for this tab to be
+  visible…" and the run resumes on `visibilitychange`. So an export whose tab
+  is backgrounded mid-run finishes when the user comes back instead of dying
+  silently. This bug was not multi-specific — a single-parcel export
+  backgrounded mid-run hung the same way; multi runs just take long enough
+  (5-6 captures, minutes) that tabbing away is how they get used.
+- **Per-parcel figures on a multi report.** After the combined Figure 1, a
+  multi run captures each parcel's own aerial figure (`kind:
+  "facts-<pid>"`, titled Figure 1a/1b/…), and `buildPrintDoc()` places each
+  in that parcel's own section, between the county-record table and the model
+  table. Context/adjacency figures and the three plates stay combined-only:
+  they argue about the selection, and N copies would repeat the argument.
+
+Caching note for anyone testing on the 8768 server: python http.server plus
+Chrome's memory cache means a plain reload can keep running the OLD js.
+`fetch(url, {cache:"reload"})` each script, then reload.
+
+### Why the printed PDF's maps were blank (31 Aug, Bryan's second report)
+
+Bryan: *"None of the maps are generating in the PDF. They show up blank."*
+The DOCX (and LibreOffice PDFs made from it) always had the maps; only
+"Export as PDF" — `window.print()` — lost them. Two stacked causes, both in
+Chrome's print pipeline, both reproduced:
+
+1. **An image that has never been decoded prints as an empty box.**
+   `#pr-print` is `display:none` on screen, so nothing in it has ever been
+   painted, and the print raster does not wait for the async decode it
+   triggers on first meeting a data-URI image. Minimal repro
+   (chief-of-staff scratchpad, `print-blank-repro.html`): same page, same
+   bytes — the undecoded `<img>` prints blank, the `decode()`d one prints.
+2. **`decode()` is not sufficient at this document's size.** The decoded-
+   image cache can evict under the memory pressure of eight multi-megapixel
+   data URIs, and an evicted image prints blank again (observed: first
+   plate blank while later ones printed, varying by run).
+
+The fix is `rasterizePrintImages()` in js/parcel-report.js: before
+`window.print()`, every print `<img>` is decoded (raced against a 10 s
+deadline — decode() has been seen to stall — a stall degrades to printing
+anyway) and then drawn into a `<canvas>` that takes its place and its
+classes. A canvas's bitmap is part of the DOM; nothing can evict it. The
+print CSS is class-selected, so layout is identical. The DOCX path is
+untouched — it rebuilds `#pr-print` with fresh `<img>` nodes and reads
+their bytes.
+
+Verified end-to-end 2026-08-31 over CDP `Page.printToPDF` (the same
+renderer Save-as-PDF uses) against the real app, real captures, Leslie's
+pair: 10 pages, every figure and plate present.
+
+**Trade-off, known:** canvases print as lossless bitmaps, so the browser
+print PDF is now ~59 MB where the blank-mapped one was small. The
+emailable PDF remains LibreOffice's render of the DOCX (~6 MB, same
+document). If browser-print size ever matters, that is a reason for the
+server-side PDF in the modernization proposals, not for going back to imgs.
+
+**Testing note:** headless + `--virtual-time-budget` is NOT a faithful
+print pipeline (prints early, stalls `decode()`); use headless=new + CDP
+with no virtual time. And a stray Chrome holding the debug port makes every
+later run silently attach to the zombie — kill by `user-data-dir` first.

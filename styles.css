@@ -2973,3 +2973,81 @@ html.nrpc-mobile #pr-toast {
     break-after: avoid;
   }
 }
+
+/* ── Multi-parcel selection (branch multi-parcel) ───────────────────────── */
+
+/* The header's "Add parcels" toggle sits between the title and the close
+   button; #pr-header is already flex space-between, so it needs a margin
+   to sit off the title rather than in the centre. */
+#pr-add-toggle {
+  margin-left: auto;
+  margin-right: 10px;
+  background: none;
+  border: 1px solid #c8c8c8;
+  border-radius: 12px;
+  padding: 2px 9px;
+  font-size: 11px;
+  color: #555;
+  cursor: pointer;
+  line-height: 1.5;
+  white-space: nowrap;
+}
+#pr-add-toggle:hover {
+  border-color: #888;
+  color: #222;
+}
+#pr-add-toggle.pr-add-on {
+  background: #1a73e8;
+  border-color: #1a73e8;
+  color: #fff;
+}
+
+/* One chip per selected parcel. */
+#pr-selection {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  padding: 8px 12px 2px;
+}
+.pr-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: #eef3fc;
+  border: 1px solid #b9cdf0;
+  border-radius: 12px;
+  padding: 2px 4px 2px 9px;
+  font-size: 11px;
+  color: #23448c;
+}
+.pr-chip-x {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+  padding: 0 4px;
+  color: #5d79b4;
+}
+.pr-chip-x:hover {
+  color: #1c2f5e;
+}
+.pr-chip-note {
+  font-size: 11px;
+  color: #777;
+}
+
+/* The mobile sheet header is the same header; keep the toggle tappable. */
+html.nrpc-mobile #pr-add-toggle {
+  padding: 6px 12px;
+  font-size: 13px;
+}
+html.nrpc-mobile .pr-chip {
+  font-size: 13px;
+  padding: 4px 6px 4px 11px;
+}
+html.nrpc-mobile .pr-chip-x {
+  font-size: 18px;
+  padding: 0 6px;
+}

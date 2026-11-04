@@ -256,7 +256,11 @@ window.NRPCReportMaps = (function () {
       hiddenContainer.style.width = w + "px";
       hiddenContainer.style.height = h + "px";
       // Let the view pick the new container size up before anything is drawn.
-      await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+      // Hidden-tab safe: rAF does not fire there — see paintSettled().
+      await new Promise(r => {
+        if (document.hidden) return setTimeout(r, 60);
+        requestAnimationFrame(() => requestAnimationFrame(r));
+      });
     }
     return hiddenView;
   }
@@ -587,6 +591,39 @@ window.NRPCReportMaps = (function () {
       g.push(parcelTop);
       frameOn.push(frameBuf ? new m.Graphic({ geometry: frameBuf }) : parcelTop);
 
+      // A multi-parcel selection: each parcel labelled with its OWN score and
+      // rank, because the model has no combined number — see combineFacts().
+      if (facts.multi && facts.parcels) {
+        facts.parcels.forEach(pf => {
+          const pmod = pf.model;
+          if (!pmod || !pf.parcelRings) return;
+          const at = meanPoint(ring4326(pf.parcelRings));
+          if (!at) return;
+          const bits = [];
+          const overall = pmod.scores ? pmod.scores["Overall Value"] : null;
+          if (overall !== null && overall !== undefined) bits.push("Score " + overall.toFixed(3));
+          if (pmod.rank !== null && pmod.rank !== undefined)
+            bits.push("Rank " + pmod.rank.toLocaleString("en-US"));
+          if (!bits.length) return;
+          g.push(
+            new m.Graphic({
+              geometry: at,
+              symbol: {
+                type: "text",
+                text: bits.join(" · "),
+                color: [10, 10, 10, 1],
+                backgroundColor: [255, 255, 255, 0.94],
+                borderLineColor: [20, 60, 200, 1],
+                borderLineSize: Math.max(1, 1.5 * k),
+                haloColor: [255, 255, 255, 0.9],
+                haloSize: Math.max(1, 1.5 * k),
+                font: { size: Math.round(13 * k), weight: "bold", family: "sans-serif" },
+              },
+            })
+          );
+        });
+      }
+
       // The parcel's own score and rank, on the parcel, so the sheet does not
       // have to be read against the legend to find out what the subject scores.
       // The percentile and the seven sub-scores are in the furniture; putting
@@ -739,6 +776,8 @@ window.NRPCReportMaps = (function () {
     const h = o.height || INLINE_H;
     const t0 = performance.now();
     try {
+      // A hidden tab cannot capture at all — wait for it, don't hang in it.
+      await whenVisible(o.say);
       const m = await loadModules();
       const built = buildGraphics(m, facts, kind, w / INLINE_W);
       if (!built) return null;
@@ -828,6 +867,42 @@ window.NRPCReportMaps = (function () {
   // costs an export about 1.6 s; a figure that argues nothing costs more.
   const SETTLE_MS = 400;
 
+  // The paint wait, hidden-tab safe. requestAnimationFrame NEVER fires in a
+  // hidden tab, so an export whose tab is backgrounded mid-run — or driven
+  // from a background tab — used to park here forever (measured 2026-08-31:
+  // capture stuck between goTo and takeScreenshot, document.hidden true, no
+  // error, no timeout). Same class of bug as the hidden-tab view.goTo fix in
+  // parcel-report.js. With no frames being produced there is no fade to wait
+  // out, so plain time is the whole wait.
+  function paintSettled(resolve) {
+    setTimeout(() => {
+      if (document.hidden) return resolve();
+      requestAnimationFrame(() => requestAnimationFrame(resolve));
+    }, SETTLE_MS);
+  }
+
+  /**
+   * Resolve once this tab is visible. A hidden tab renders no frames at all —
+   * not for requestAnimationFrame and not for takeScreenshot(), which waits
+   * on a rendered frame internally — so a capture attempted while hidden
+   * cannot finish, full stop. Verified 2026-08-31: an export driven in a
+   * background tab sat inside the first capture indefinitely with no error.
+   * Rather than hang silently, every capture waits HERE, says so through
+   * onProgress, and resumes the moment the user comes back to the tab.
+   */
+  function whenVisible(say) {
+    if (!document.hidden) return Promise.resolve();
+    if (say) say("Waiting for this tab to be visible — maps can only be captured while it is…");
+    return new Promise(resolve => {
+      const onChange = () => {
+        if (document.hidden) return;
+        document.removeEventListener("visibilitychange", onChange);
+        resolve();
+      };
+      document.addEventListener("visibilitychange", onChange);
+    });
+  }
+
   /**
    * Resolve when every FeatureLayer on the view has finished fetching and
    * drawing, or when the timeout gives up on it.
@@ -875,7 +950,7 @@ window.NRPCReportMaps = (function () {
         if (handle) handle.remove();
         handle = null;
         clearTimeout(timer);
-        setTimeout(() => requestAnimationFrame(() => requestAnimationFrame(resolve)), SETTLE_MS);
+        paintSettled(resolve);
       };
       const timer = setTimeout(done, timeoutMs);
       if (!view.updating) return done();
@@ -1047,7 +1122,9 @@ window.NRPCReportMaps = (function () {
     ctx.font = `${Math.round(34 * S)}px Georgia, "Times New Roman", serif`;
     ctx.fillStyle = "#444";
     ctx.fillText(
-      s.subtitle || `${where} · PID ${id.pid || "unknown"}` + (id.zip ? ` · ${id.zip}` : ""),
+      s.subtitle ||
+        `${where} · ${facts.multi ? "PIDs" : "PID"} ${id.pid || "unknown"}` +
+          (id.zip ? ` · ${id.zip}` : ""),
       pad,
       pad + Math.round(52 * S)
     );
@@ -1473,11 +1550,20 @@ window.NRPCReportMaps = (function () {
 
   // ── The three plates' legend specs ───────────────────────────────────────
 
+  // "Subject parcel" on a one-parcel report, "Selected parcels" on a
+  // multi-parcel one — the same orange outlines either way.
+  function subjectLabel(facts) {
+    return facts && facts.multi ? "Selected parcels" : "Subject parcel";
+  }
+  function touchingLabel(facts) {
+    return facts && facts.multi ? "Parcels touching them" : "Parcels touching it";
+  }
+
   /** Plate 1. The 250 m ring row is gone with the ring itself. */
   function plateOneLegend(facts) {
     const out = [
-      { label: "Subject parcel", fill: "rgba(255,190,60,0.35)", stroke: "rgb(255,150,0)" },
-      { label: "Parcels touching it", fill: "rgba(120,120,120,0.22)", stroke: "rgb(60,60,60)", dash: true },
+      { label: subjectLabel(facts), fill: "rgba(255,190,60,0.35)", stroke: "rgb(255,150,0)" },
+      { label: touchingLabel(facts), fill: "rgba(120,120,120,0.22)", stroke: "rgb(60,60,60)", dash: true },
     ];
     const opps = facts.sharedOpportunities;
     const present = new Set(((opps && opps.mapGeometry && opps.mapGeometry.features) || []).map(f => f.relation));
@@ -1494,7 +1580,7 @@ window.NRPCReportMaps = (function () {
   }
 
   /** Plate 2. The model's own five breaks, then the two Met Council classes. */
-  function plateTwoLegend() {
+  function plateTwoLegend(facts) {
     const out = MODEL_BREAKS.map(b => ({
       label: b.label,
       fill: `rgba(${b.rgb[0]},${b.rgb[1]},${b.rgb[2]},0.72)`,
@@ -1511,7 +1597,7 @@ window.NRPCReportMaps = (function () {
       stroke: `rgb(${ECO_SYM.sensitive.rgb.join(",")})`,
       dash: true,
     });
-    out.push({ label: "Subject parcel", fill: "rgba(0,0,0,0)", stroke: "rgb(20,60,200)" });
+    out.push({ label: subjectLabel(facts), fill: "rgba(0,0,0,0)", stroke: "rgb(20,60,200)" });
     return out;
   }
 
@@ -1555,11 +1641,15 @@ window.NRPCReportMaps = (function () {
     const plan = [
       {
         kind: "facts",
-        title: "Figure 1. The parcel",
+        title: facts.multi ? "Figure 1. The parcels" : "Figure 1. The parcel",
         caption: () =>
-          `The subject parcel outlined on aerial imagery. PID ${
-            (facts.identity && facts.identity.pid) || "unknown"
-          }${facts.land && facts.land.parcelAcres ? `, ${facts.land.parcelAcres} acres` : ""}.`,
+          facts.multi
+            ? `The ${facts.multi.count} selected parcels outlined on aerial imagery. PIDs ${facts.multi.pids.join(
+                ", "
+              )}${facts.land && facts.land.parcelAcres ? `; ${facts.land.parcelAcres} acres in total` : ""}.`
+            : `The subject parcel outlined on aerial imagery. PID ${
+                (facts.identity && facts.identity.pid) || "unknown"
+              }${facts.land && facts.land.parcelAcres ? `, ${facts.land.parcelAcres} acres` : ""}.`,
         margin: 0.35,
       },
       {
@@ -1568,7 +1658,9 @@ window.NRPCReportMaps = (function () {
         caption: () => {
           const hits = (facts.context || []).filter(c => c.count > 0).map(c => c.layer);
           return (
-            `The parcel and a ${facts.contextBufferMetres || 250} m geodesic ring around it — the ` +
+            `The ${facts.multi ? "parcels" : "parcel"} and a ${facts.contextBufferMetres || 250} m geodesic ring around ${
+              facts.multi ? "them" : "it"
+            } — the ` +
             `area the context counts are measured over. ` +
             (hits.length
               ? `Layers with a feature inside the ring: ${hits.join("; ")}.`
@@ -1613,6 +1705,7 @@ window.NRPCReportMaps = (function () {
         width: INLINE_W,
         height: INLINE_H,
         marginFraction: step.margin,
+        say,
       });
       if (!shot) {
         failures.push(step.kind);
@@ -1624,6 +1717,43 @@ window.NRPCReportMaps = (function () {
         caption: step.caption(),
         source: `${DATA_ATTRIB}. ${ESRI_ATTRIB}. Captured ${shot.capturedAt.toLocaleString()}.`,
       });
+    }
+
+    // A multi-parcel report gets each parcel's own aerial figure after the
+    // combined one — Bryan, 31 Aug: "maps with both parcels together, then
+    // separately for each." Each per-parcel facts object IS a single parcel's
+    // facts, so the ordinary facts capture draws it; only the kind is renamed
+    // so buildPrintDoc can place each figure in that parcel's own section.
+    // The context and adjacency figures stay combined-only: they argue about
+    // the selection, and per-parcel copies would repeat the argument N times.
+    if (facts.multi && facts.parcels) {
+      const letters = "abcdefghijklmnopqrstuvwxyz";
+      for (let i = 0; i < facts.parcels.length; i++) {
+        const pf = facts.parcels[i];
+        const pid = (pf.identity && pf.identity.pid) || `parcel-${i + 1}`;
+        say(`Preparing maps… parcel ${i + 1} of ${facts.parcels.length}`);
+        const shot = await capture(pf, "facts", {
+          width: INLINE_W,
+          height: INLINE_H,
+          marginFraction: 0.35,
+          say,
+        });
+        if (!shot) {
+          failures.push(`facts for PID ${pid}`);
+          continue;
+        }
+        figures.push({
+          ...shot,
+          kind: "facts-" + pid,
+          title: `Figure 1${letters[i] || String(i + 1)}. Parcel ${i + 1} of ${facts.parcels.length}`,
+          caption:
+            `PID ${pid}` +
+            (pf.identity && pf.identity.address ? ` — ${pf.identity.address}` : "") +
+            (pf.land && pf.land.parcelAcres ? `, ${pf.land.parcelAcres} acres` : "") +
+            `, outlined on aerial imagery.`,
+          source: `${DATA_ATTRIB}. ${ESRI_ATTRIB}. Captured ${shot.capturedAt.toLocaleString()}.`,
+        });
+      }
     }
 
     // ── The three plates ──────────────────────────────────────────────────
@@ -1659,6 +1789,7 @@ window.NRPCReportMaps = (function () {
         width: Math.min(win.w, MAX_CAPTURE_PX),
         height: Math.min(win.h, MAX_CAPTURE_PX),
         timeoutMs: 20000,
+        say,
         ...(capOpts || {}),
       });
       if (!shot) {
@@ -1700,7 +1831,7 @@ window.NRPCReportMaps = (function () {
         "plate",
         size,
         {
-          title: "The parcel and its neighbourhood",
+          title: facts.multi ? "The parcels and their neighbourhood" : "The parcel and its neighbourhood",
           layout: "full",
           legend: { title: "Legend", entries: plateOneLegend(facts) },
           notes: [
@@ -1732,6 +1863,8 @@ window.NRPCReportMaps = (function () {
             (mod.topPercentOfCounty !== null && mod.topPercentOfCounty !== undefined
               ? ` — top ${mod.topPercentOfCounty}% of the county`
               : "")
+          : facts.multi
+          ? `${facts.multi.count} parcels — the model ranks parcels one at a time; each parcel's rank is in the report.`
           : "This parcel is not present in the prioritization model layer.";
       const p = await plate(
         "eco",
@@ -1739,15 +1872,16 @@ window.NRPCReportMaps = (function () {
         PLATE_PORTRAIT,
         {
           title: "Ecological sensitivity and suitability",
-          subtitle:
-            (facts.identity && facts.identity.address
-              ? facts.identity.address + " · "
-              : "") + `PID ${(facts.identity && facts.identity.pid) || "unknown"} · ${rankLine}`,
+          subtitle: facts.multi
+            ? `PIDs ${facts.multi.pids.join(" · ")} · ${rankLine}`
+            : (facts.identity && facts.identity.address
+                ? facts.identity.address + " · "
+                : "") + `PID ${(facts.identity && facts.identity.pid) || "unknown"} · ${rankLine}`,
           kicker:
             "Hennepin County Parcel Prioritization Model, the layer's own five class breaks · " +
             "Metropolitan Council ecologically significant and sensitive areas",
           layout: "full",
-          legend: { title: "Overall Value (model score)", entries: plateTwoLegend() },
+          legend: { title: "Overall Value (model score)", entries: plateTwoLegend(facts) },
           table: rows.length ? { title: "The parcel's model scores", rows } : null,
           notes: [
             `Every parcel in frame is shaded by its Overall Value in the Hennepin County Parcel ` +
@@ -1811,6 +1945,7 @@ window.NRPCReportMaps = (function () {
         // the case this exists for, and it is a property of the data, not
         // something that can be decided in advance.
         const probe = await capture(facts, "sites", {
+          say,
           width: 1200,
           height: 900,
           marginFraction: 0.14,
@@ -1824,6 +1959,7 @@ window.NRPCReportMaps = (function () {
           const pw = parcelGroundWidthM(facts);
           if (pw && frameW && pw / frameW < INSET_TRIGGER) {
             const ishot = await capture(facts, "plate", {
+              say,
               width: 900,
               height: 900,
               marginFraction: 0.3,
@@ -1869,9 +2005,9 @@ window.NRPCReportMaps = (function () {
             legend: {
               title: "Nearest " + rows.length + " contributions",
               entries: [
-                { label: "Subject parcel", fill: "rgba(255,190,60,0.35)", stroke: "rgb(255,150,0)" },
+                { label: subjectLabel(facts), fill: "rgba(255,190,60,0.35)", stroke: "rgb(255,150,0)" },
                 {
-                  label: "Parcels touching it",
+                  label: touchingLabel(facts),
                   fill: "rgba(120,120,120,0.22)",
                   stroke: "rgb(60,60,60)",
                   dash: true,
