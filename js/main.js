@@ -9,7 +9,12 @@ require([
   "esri/Graphic",
   "esri/Basemap",
   "esri/geometry/geometryEngine",
-], (WebMap, MapView, Home, LayerList, Legend, Editor, GraphicsLayer, Graphic, Basemap, geometryEngine) => {
+  "esri/layers/FeatureLayer",
+  "esri/layers/GroupLayer",
+  "esri/geometry/Polyline",
+  "esri/widgets/ScaleBar",
+], (WebMap, MapView, Home, LayerList, Legend, Editor, GraphicsLayer, Graphic, Basemap, geometryEngine,
+    FeatureLayer, GroupLayer, Polyline, ScaleBar) => {
 
   const webmap = new WebMap({
     portalItem: {
@@ -54,8 +59,11 @@ require([
     const results = [];
     function walk(layer) {
       if (!layer.visible) return;
+      if (layer.nrpcHelper) return;   // label-only layers added by model-v1.js
       if (layer.type === "group") {
         if ((layer.title || "").toLowerCase().includes("boundaries")) return;
+        if (layer.nrpcWater) return;    // reference Water group (model-v1.js); the original
+                                        // Public Water Basins layer is still exportable
         layer.layers?.forEach(child => walk(child));
       } else if (layer.type === "feature") {
         results.push(layer);
@@ -69,6 +77,13 @@ require([
 
   view.when(() => {
     view.ui.move("zoom", "top-right");
+
+    // Model v1.0 legend, one model layer, Water layer (js/model-v1.js); before the widgets below
+    const modelV1 = window.NRPCModelV1
+      ? window.NRPCModelV1.apply(view, { FeatureLayer, GroupLayer, geometryEngine, Polyline })
+      : { model: null, water: null };
+    if (new URLSearchParams(location.search).has("debug")) window.__nrpc = { view, modelV1 };
+    view.ui.add(new ScaleBar({ view, unit: "imperial" }), "bottom-left");
 
     const openTabBtn = document.createElement("div");
     openTabBtn.className = "esri-widget esri-widget--button esri-interactive";
@@ -304,6 +319,11 @@ require([
     legendContainer.id = "legend-container";
     legendWrapper.appendChild(legendContainer);
     new Legend({ view, container: legendContainer });
+    if (window.NRPCModelV1) {
+      window.NRPCModelV1.buildLegend(legendWrapper, view, modelV1.model, modelV1.water);
+      // keep the panel title first, the model block right under it
+      legendWrapper.insertBefore(legendTitle, legendWrapper.firstChild);
+    }
 
     // Layer list panel (visible by default)
     const layerListWrapper = document.createElement("div");
