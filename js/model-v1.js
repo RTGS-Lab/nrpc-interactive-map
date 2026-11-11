@@ -117,6 +117,9 @@ window.NRPCModelV1 = (() => {
   }
 
   const isName = s => typeof s === "string" && /[A-Za-z]/.test(s) && !/^\s*unnamed\s*$/i.test(s);
+  // "Pool 1" / "Pool 2" are the GNIS names of the Mississippi lock-and-dam pools; the river's own
+  // label already names that water, so the pool numbers are left off.
+  const isLakeName = s => isName(s) && !/^\s*Pool\s+\d+\s*$/i.test(s);
 
   function waterLabelClasses() {
     const font = (size, weight = "normal") =>
@@ -133,7 +136,7 @@ window.NRPCModelV1 = (() => {
     });
     // sized by area, coming in as the view zooms (acres = whole lake, sub-basins summed)
     return [
-      cls("kind = 'lake' AND acres >= 1000", 11, 600000, "bold"),
+      cls("kind = 'lake' AND acres >= 1000", 10.5, 600000, "bold"),
       cls("kind = 'lake' AND acres >= 250 AND acres < 1000", 10, 300000),
       cls("kind = 'lake' AND acres >= 60 AND acres < 250", 9, 150000),
       cls("kind = 'lake' AND acres >= 15 AND acres < 60", 8.5, 72000),
@@ -199,7 +202,7 @@ window.NRPCModelV1 = (() => {
       const sub = (a.pw_sub_nam || "").trim();
       const bay = /^Minnetonka-(.+\b(Bay|Arm))$/.exec(sub);
       if (bay && f.geometry) bays.push({ name: bay[1], acres: a.acres, geometry: f.geometry });
-      if (!isName(name) || !f.geometry) return;
+      if (!isLakeName(name) || !f.geometry) return;
       const key = `${name}|${String(a.dowlknum || "").slice(0, 6)}`;
       const g = groups.get(key) || { name, acres: 0, best: null };
       g.acres += a.acres || 0;
