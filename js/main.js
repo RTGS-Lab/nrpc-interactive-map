@@ -13,8 +13,10 @@ require([
   "esri/layers/GroupLayer",
   "esri/geometry/Polyline",
   "esri/widgets/ScaleBar",
+  "esri/geometry/Extent",
+  "esri/geometry/support/webMercatorUtils",
 ], (WebMap, MapView, Home, LayerList, Legend, Editor, GraphicsLayer, Graphic, Basemap, geometryEngine,
-    FeatureLayer, GroupLayer, Polyline, ScaleBar) => {
+    FeatureLayer, GroupLayer, Polyline, ScaleBar, Extent, webMercatorUtils) => {
 
   const webmap = new WebMap({
     portalItem: {
@@ -517,9 +519,51 @@ require([
       });
     });
 
+    // ── Selection mask: greys everything outside the selected areas ───────────
+    // Drawn above the data layers, below the highlight outline; labels draw above both.
+    // A helper layer: hidden from the LayerList, not in the Legend, skipped by Clip & Zip.
+    const selectionMaskLayer = new GraphicsLayer({ title: "Selection mask", listMode: "hide" });
+    selectionMaskLayer.nrpcHelper = true;
+    webmap.add(selectionMaskLayer);
+
+    const selectionMaskSymbol = {
+      type: "simple-fill",
+      color: [128, 128, 128, 0.3],     // #808080 at 30 %
+      outline: null
+    };
+
     // ── Graphics layer for city outline highlight ─────────────────────────────
     const cityHighlightLayer = new GraphicsLayer({ listMode: "hide" });
+    cityHighlightLayer.nrpcHelper = true;
     webmap.add(cityHighlightLayer);
+
+    // Bumped on every selection change so a slow query cannot draw a stale selection.
+    let selectionSeq = 0;
+
+    function clearSelectionGraphics() {
+      selectionSeq++;
+      cityHighlightLayer.removeAll();
+      selectionMaskLayer.removeAll();
+    }
+
+    // Mask = a large rectangle around the selection minus the union of the selected
+    // geometries. A large rectangle (not the county) so watersheds that run past the county
+    // line stay clear and the grey has no visible edge at any zoom.
+    function drawSelectionMask(geometries) {
+      selectionMaskLayer.removeAll();
+      const geoms = geometries.filter(Boolean);
+      if (!geoms.length) return;
+      const selected = geoms.length > 1 ? geometryEngine.union(geoms) : geoms[0];
+      if (!selected) return;
+      const e = selected.extent;
+      const pad = Math.max(e.width, e.height) * 50;
+      const outer = new Extent({
+        xmin: e.xmin - pad, ymin: e.ymin - pad, xmax: e.xmax + pad, ymax: e.ymax + pad,
+        spatialReference: selected.spatialReference
+      });
+      const mask = geometryEngine.difference(outer, selected);
+      if (mask) selectionMaskLayer.add(new Graphic({ geometry: mask, symbol: selectionMaskSymbol }));
+    }
 
     const cityHighlightSymbol = {
       type: "simple-fill",
@@ -600,9 +644,16 @@ require([
     }
 
     function updateHighlight() {
-      cityHighlightLayer.removeAll();
+      clearSelectionGraphics();
+      const seq = selectionSeq;
       if (fullCountySelected && countyGeometryCache) {
         cityHighlightLayer.add(new Graphic({ geometry: countyGeometryCache, symbol: cityHighlightSymbol }));
+        // county geometry is cached in WGS84 for Clip & Zip; the mask needs the view's SR
+        const sr = view.spatialReference;
+        const county = sr.isWGS84 ? countyGeometryCache
+          : (sr.isWebMercator && webMercatorUtils.canProject(countyGeometryCache, sr))
+            ? webMercatorUtils.project(countyGeometryCache, sr) : null;
+        if (county) drawSelectionMask([county]);
         return;
       }
       const checkedCities = [...cityCheckboxScroll.querySelectorAll("input[data-type='city']:checked")];
@@ -625,9 +676,12 @@ require([
         promises.push(watershedsLayer.queryFeatures(q).then(r => r.features));
       }
       Promise.all(promises).then(results => {
-        results.flat().forEach(f => {
+        if (seq !== selectionSeq) return;   // selection changed while the query ran
+        const features = results.flat();
+        features.forEach(f => {
           cityHighlightLayer.add(new Graphic({ geometry: f.geometry, symbol: cityHighlightSymbol }));
         });
+        drawSelectionMask(features.map(f => f.geometry));
       });
     }
 
@@ -694,7 +748,7 @@ require([
       } else {
         fullCountySelected = false;
         clipGeometry = null;
-        cityHighlightLayer.removeAll();
+        clearSelectionGraphics();
         cityDropdownBtn.textContent = "Zoom to...";
         cityZoomBtn.disabled = true;
         updateClipZipPanel();
@@ -742,7 +796,7 @@ require([
             if (cb.checked && fullCountySelected) {
               fullCountyCb.checked = false;
               fullCountySelected = false;
-              cityHighlightLayer.removeAll();
+              clearSelectionGraphics();
             }
             const total = cityCheckboxScroll.querySelectorAll("input[data-type]:checked").length;
             cityDropdownBtn.textContent = total === 0
@@ -777,7 +831,7 @@ require([
         cityCheckboxScroll.querySelectorAll("input[type=checkbox]").forEach(cb => (cb.checked = false));
         fullCountySelected = false;
         clipGeometry = null;
-        cityHighlightLayer.removeAll();
+        clearSelectionGraphics();
         cityDropdownBtn.textContent = "Zoom to...";
         cityZoomBtn.disabled = true;
         updateClipZipPanel();
@@ -866,7 +920,7 @@ require([
             if (cb.checked && fullCountySelected) {
               fullCountyCb.checked = false;
               fullCountySelected = false;
-              cityHighlightLayer.removeAll();
+              clearSelectionGraphics();
             }
             const total = cityCheckboxScroll.querySelectorAll("input[data-type]:checked").length;
             cityDropdownBtn.textContent = total === 0
