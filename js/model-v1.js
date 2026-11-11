@@ -201,7 +201,10 @@ window.NRPCModelV1 = (() => {
       const a = f.attributes, name = (a.gnis_name || "").trim();
       const sub = (a.pw_sub_nam || "").trim();
       const bay = /^Minnetonka-(.+\b(Bay|Arm))$/.exec(sub);
-      if (bay && f.geometry) bays.push({ name: bay[1], acres: a.acres, geometry: f.geometry });
+      // a bay label only where the sub-basin has no GNIS name of its own beyond "Lake Minnetonka"
+      // (e.g. St. Albans Bay is already labelled by its GNIS name "Saint Albans Bay")
+      if (bay && f.geometry && (!isName(name) || name === "Lake Minnetonka"))
+        bays.push({ name: bay[1], acres: a.acres, geometry: f.geometry });
       if (!isLakeName(name) || !f.geometry) return;
       const key = `${name}|${String(a.dowlknum || "").slice(0, 6)}`;
       const g = groups.get(key) || { name, acres: 0, best: null };
@@ -292,7 +295,8 @@ window.NRPCModelV1 = (() => {
       console.warn("model-v1: rivers not loaded --", err && err.message);
     }
 
-    if (rivers) group.add(rivers);
+    // river lines under the lake fill (a creek's line through a lake is hidden; its name still shows)
+    if (rivers) group.add(rivers, 0);
     group.add(names);
     water.names = names; water.rivers = rivers;
     return water;
