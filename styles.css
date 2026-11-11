@@ -494,3 +494,85 @@ body,
   cursor: default;
 }
 
+
+/* ── Model v1.0 legend (js/model-v1.js) ─────────────────────────────────────────────────── */
+/* The legend panel grows to fit the model block, so the whole ramp shows without scrolling;
+   any other layer legends scroll underneath it. */
+#legend-wrapper.panel {
+  height: auto;
+  max-height: calc(100vh - 90px);
+}
+
+#legend-container {
+  max-height: 220px;
+}
+
+#model-legend {
+  flex: none;
+  padding: 8px 12px 6px;
+  font-family: "Avenir Next", "Segoe UI", Arial, sans-serif;
+  color: #222;
+  border-bottom: 1px solid #e6e6e6;
+}
+
+#model-legend .ml-title {
+  font-size: 14px;
+  font-weight: 600;
+  margin-bottom: 6px;
+}
+
+#model-legend .ml-ramp {
+  display: flex;
+  flex-direction: column;
+}
+
+#model-legend .ml-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12.5px;
+  line-height: 1;
+}
+
+/* one continuous column: the swatches touch, one thin rule round the whole ramp */
+#model-legend .ml-ramp .ml-swatch {
+  width: 30px;
+  height: 20px;
+  flex: none;
+  border-left: 1px solid #8a8a8a;
+  border-right: 1px solid #8a8a8a;
+}
+
+#model-legend .ml-ramp .ml-row:first-child .ml-swatch { border-top: 1px solid #8a8a8a; }
+#model-legend .ml-ramp .ml-row:last-child .ml-swatch { border-bottom: 1px solid #8a8a8a; }
+
+#model-legend .ml-note {
+  font-size: 11.5px;
+  color: #555;
+  margin-top: 5px;
+}
+
+#model-legend .ml-water {
+  margin-top: 8px;
+}
+
+#model-legend .ml-water .ml-swatch {
+  width: 30px;
+  height: 16px;
+  flex: none;
+  border: 1px solid;
+}
+
+#model-legend .ml-water .ml-label {
+  font-style: italic;
+  color: #1D5A8E;
+  font-weight: 600;
+}
+
+/* the Esri legend says "No legend" when only the model and water are on; the block above covers it */
+#legend-container .esri-legend__message { display: none; }
+
+@media (max-width: 480px) {
+  #model-legend .ml-row { font-size: 12px; }
+  #model-legend .ml-ramp .ml-swatch { height: 18px; }
+}
