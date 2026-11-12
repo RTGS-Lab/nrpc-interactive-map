@@ -214,7 +214,18 @@ window.NRPCParcelCard = (() => {
     if (highlight) { highlight.remove(); highlight = null; }
     if (!f) return;
     const lv = await view.whenLayerView(model.layer);
-    if (marked && marked.feature === f) { if (highlight) highlight.remove(); highlight = lv.highlight(f); }
+    // ArcGIS 4.29's feature worker can throw (setHighlight -> _getBlock) when a highlight lands
+    // while the layer view is still loading the tile that holds the feature; wait for it to settle
+    // ... or while the layer view is suspended (e.g. a phone's county view, beyond the model's
+    // minimum scale): defer until it draws, then highlight by object id
+    const ready = () => !lv.suspended && !lv.updating;
+    if (!ready()) await new Promise(res => {
+      const h = lv.watch(["suspended", "updating"], () => { if (ready()) { h.remove(); res(); } });
+    });
+    if (marked && marked.feature === f) {
+      if (highlight) highlight.remove();
+      highlight = lv.highlight(f.attributes[model.layer.objectIdField] ?? f);
+    }
   }
 
   function clear() {
