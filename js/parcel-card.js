@@ -43,11 +43,28 @@ window.NRPCParcelCard = (() => {
     while (l && l !== view.map) { if (l.visible === false) l.visible = true; l = l.parent; }
   }
 
+  // The run manifest plus the source-link audit (round 7, Bryan: "if you don't have the source
+  // back to the full layer, do not add a source link"): data/card-v1-links.json, written by
+  // 96-working-20261112-source-link-audit.py, maps each source URL on file to {verdict, name,
+  // link}; only "full" entries become links, everything else is plain text.
   async function loadRun() {
     if (run) return run;
-    runLoading = runLoading || fetch("data/card-v1-run.json").then(r => r.json());
+    runLoading = runLoading || Promise.all([
+      fetch("data/card-v1-run.json").then(r => r.json()),
+      fetch("data/card-v1-links.json").then(r => r.ok ? r.json() : {}).catch(() => ({})),
+    ]).then(([m, links]) => { m.links = links; return m; });
     run = await runLoading;
     return run;
+  }
+
+  // One source line: "label -- agency; date", then links to the full layers it names, if any.
+  function sourceLine(s, links) {
+    const full = String(s.url || "").split(/;\s*/).map(p => (p.match(/https?:\/\/\S+/) || [])[0])
+      .filter(Boolean).map(u => links[u]).filter(v => v && v.verdict === "full" && v.link);
+    const a = full.map(v => `<a href="${esc(v.link)}" target="_blank" rel="noopener">${esc(v.name)}</a>`);
+    const clean = t => String(t ?? "").replace(/\[NEEDS CONFIRM\]/g, "(not confirmed)");   // internal marker
+    return `<li class="pc-src">${esc(clean(s.label))} -- ${esc(clean(s.agency))}; ${esc(clean(s.date))}` +
+      (a.length ? `. Source layer${a.length > 1 ? "s" : ""}: ${a.join(", ")}` : "") + `</li>`;
   }
 
   async function loadShard(pid) {
@@ -240,11 +257,7 @@ window.NRPCParcelCard = (() => {
       const inputsHtml = inputs ? `<details class="pc-inputs"><summary>Inputs (${ins.length})</summary><ul>` +
         ins.map(i => {
           const v = inputs[i.field] || {};
-          const src = (i.sources || []).map(s => {
-            const url = String(s.url || "").split(/[;\s]/).find(u => /^https?:/.test(u));
-            return `<li class="pc-src">${esc(s.label)} -- ${esc(s.agency)}; ${esc(s.date)}` +
-              (url ? `; <a href="${esc(url)}" target="_blank" rel="noopener">source</a>` : "") + `</li>`;
-          }).join("");
+          const src = (i.sources || []).map(s => sourceLine(s, r.links || {})).join("");
           return `<li><span class="pc-in-label">${esc(i.label)}</span>: value read ${esc(v.value ?? "[not on file]")},
             ${v.points == null ? "[not on file]" : v.points.toFixed(2)} points, within-category weight
             ${Math.round(100 * i.within)}%${src ? `<ul class="pc-srcs">${src}</ul>` : ""}</li>`;

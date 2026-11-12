@@ -1,0 +1,92 @@
+{
+ "https://gisdata.mn.gov/dataset/bdry-dnr-wildlife-mgmt-areas-pub": {
+  "verdict": "full",
+  "name": "Publicly Accessible State Wildlife Management Areas",
+  "tag": "WMA",
+  "link": "https://enterprise.gisdata.mn.gov/aghost/rest/services/us_mn_state_dnr/bdry_dnr_wildlife_mgmt_areas_pub/FeatureServer"
+ },
+ "https://gisdata.mn.gov/dataset/bdry-scientific-and-nat-areas": {
+  "verdict": "full",
+  "name": "Scientific and Natural Area Units",
+  "tag": "SNA",
+  "link": "https://enterprise.gisdata.mn.gov/aghost/rest/services/us_mn_state_dnr/bdry_scientific_and_nat_areas/FeatureServer"
+ },
+ "https://tnclands.tnc.org/": {
+  "verdict": "not_full",
+  "name": "TNC",
+  "tag": "TNC",
+  "link": null
+ },
+ "https://gisdata.mn.gov/dataset/plan-mndnr-fisheries-acquisition": {
+  "verdict": "full",
+  "name": "State Aquatic Management Area (AMA) Aquisitions",
+  "tag": "AMA",
+  "link": "https://enterprise.gisdata.mn.gov/aghost/rest/services/us_mn_state_dnr/plan_mndnr_fisheries_acquisition/FeatureServer"
+ },
+ "https://www.fws.gov/gis/data/CadastralDB/links_cadastral.html": {
+  "verdict": "not_full",
+  "name": "refuges",
+  "tag": "refuges",
+  "link": null
+ },
+ "https://www.dnr.state.mn.us/mlccs/index.html": {
+  "verdict": "not_full",
+  "name": "Minnesota Land Cover Classification System | Minnesota DNR",
+  "tag": "",
+  "link": null
+ },
+ "https://gisdata.mn.gov/dataset/biota-mcbs-sites-of-biodiversity": {
+  "verdict": "full",
+  "name": "MBS Sites of Biodiversity Significance",
+  "tag": "",
+  "link": "https://enterprise.gisdata.mn.gov/aghost/rest/services/us_mn_state_dnr/biota_mcbs_sites_of_biodiversity/FeatureServer"
+ },
+ "https://gisdata.mn.gov/dataset/us-mn-state-metrogis-plan-regional-parcels": {
+  "verdict": "not_full",
+  "name": "Minnesota Geospatial Commons",
+  "tag": "regional parcels",
+  "link": null
+ },
+ "https://gisdata.mn.gov/dataset/env-mnwap-wildlife-action-netwrk": {
+  "verdict": "full",
+  "name": "MNWAP Wildlife Action Network",
+  "tag": "",
+  "link": "https://enterprise.gisdata.mn.gov/aghost/rest/services/us_mn_state_dnr/env_mnwap_wildlife_action_netwrk/FeatureServer"
+ },
+ "https://www.audubon.org/important-bird-areas": {
+  "verdict": "not_full",
+  "name": "Important Bird Areas | Audubon",
+  "tag": "",
+  "link": null
+ },
+ "https://gisdata.mn.gov/dataset/us-mn-state-metc-plan-generl-lnduse2016": {
+  "verdict": "not_full",
+  "name": "Minnesota Geospatial Commons",
+  "tag": "",
+  "link": null
+ },
+ "https://gisdata.mn.gov/dataset/water-mn-public-waters": {
+  "verdict": "full",
+  "name": "Public Waters (PW) Basin and Watercourse Delineations",
+  "tag": "",
+  "link": "https://enterprise.gisdata.mn.gov/aghost/rest/services/us_mn_state_dnr/water_mn_public_waters/FeatureServer"
+ },
+ "https://msc.fema.gov/portal/home": {
+  "verdict": "not_full",
+  "name": "FEMA Flood Map Service Center | Welcome!",
+  "tag": "",
+  "link": null
+ },
+ "https://gisdata.mn.gov/dataset/geos-dnr-watersheds": {
+  "verdict": "full",
+  "name": "MNDNR Watershed Suite",
+  "tag": "",
+  "link": "https://enterprise.gisdata.mn.gov/aghost/rest/services/us_mn_state_dnr/geos_dnr_watersheds/FeatureServer"
+ },
+ "https://gisdata.mn.gov/id/dataset/geos-gw-recharge-1996-2010-mean": {
+  "verdict": "not_full",
+  "name": "Minnesota Geospatial Commons",
+  "tag": "",
+  "link": null
+ }
+}
