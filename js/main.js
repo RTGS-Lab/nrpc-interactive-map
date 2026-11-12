@@ -307,8 +307,14 @@ require([
     toggleBar.appendChild(clipZipWrapper);
 
     view.ui.add(toggleBar, { position: "top-left", index: 0 });
-    // Top parcels table (js/top-parcels.js): button after Layers; scope follows Zoom to
-    if (window.NRPCTopParcels) window.NRPCTopParcels.init(view, modelV1.model, layersToggle);
+    // Right-side container (js/side-panel.js) with the Parcel scorecard (js/parcel-card.js; replaces
+    // the model layer's popup) and the Top parcels table (js/top-parcels.js; scope follows Zoom to)
+    const sidePanel = window.NRPCSidePanel ? window.NRPCSidePanel.init(view) : null;
+    if (window.__nrpc) window.__nrpc.side = sidePanel;
+    const parcelCard = sidePanel && window.NRPCParcelCard
+      ? window.NRPCParcelCard.init(view, modelV1.model, sidePanel) : null;
+    if (parcelCard && window.NRPCTopParcels)
+      window.NRPCTopParcels.init(view, modelV1.model, layersToggle, sidePanel, parcelCard);
 
     // ── Panel stack container ─────────────────────────────────────────────────
     const panelsContainer = document.createElement("div");

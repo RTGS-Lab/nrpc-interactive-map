@@ -1,0 +1,385 @@
+{
+ "schema": "nrpc-card-run/1",
+ "run_id": "v1-2024",
+ "label": "Model: v1.0 (2024, as published)",
+ "status": "published",
+ "source": {
+  "live_layer": "AGOL Hennepin_Suitability_Model_Results_PublicView/FeatureServer/96",
+  "inputs": "nrpc-model-explorer data/parcels.parquet (v1 replay of the published run)",
+  "built": "2026-11-12"
+ },
+ "categories": [
+  {
+   "key": "SC",
+   "label": "Spatial Context",
+   "weight": 0.3,
+   "field": "Spatial_Co",
+   "county": {
+    "p50": 13.6364,
+    "p90": 13.6364
+   }
+  },
+  {
+   "key": "HQ",
+   "label": "Habitat Quality and Diversity",
+   "weight": 0.25,
+   "field": "Habitat_Qu",
+   "county": {
+    "p50": 0.0,
+    "p90": 0.0
+   }
+  },
+  {
+   "key": "SZ",
+   "label": "Size",
+   "weight": 0.15,
+   "field": "Size",
+   "county": {
+    "p50": 0.0031,
+    "p90": 0.0247
+   }
+  },
+  {
+   "key": "WP",
+   "label": "Wildlife and Plant Conservation",
+   "weight": 0.15,
+   "field": "Wildlife_P",
+   "county": {
+    "p50": 1.0714,
+    "p90": 2.1429
+   }
+  },
+  {
+   "key": "RC",
+   "label": "Risk of Conversion",
+   "weight": 0.1,
+   "field": "Risk_of_Co",
+   "county": {
+    "p50": 0.0,
+    "p90": 0.0
+   }
+  },
+  {
+   "key": "WR",
+   "label": "Water Resources",
+   "weight": 0.05,
+   "field": "Water_Res",
+   "county": {
+    "p50": 0.0001,
+    "p90": 0.0007
+   }
+  }
+ ],
+ "inputs": [
+  {
+   "field": "PA_Value",
+   "label": "Protected Areas Nearby",
+   "category": "SC",
+   "within": 0.5,
+   "divisor": 3,
+   "sources": [
+    {
+     "label": "Protected Areas, 2020 composite",
+     "agency": "Hennepin County composite of: Established Conservation Easements (county), National Wildlife Refuges (US Fish and Wildlife Service), Parks of Natural Resource Significance (county), Wildlife Management Areas (DNR), Scientific and Natural Areas (DNR), TNC Lands (The Nature Conservancy), Aquatic Management Areas (DNR)",
+     "date": "Fall 2020 (tracking sheet); county layers 'County edited'",
+     "url": "https://gisdata.mn.gov/dataset/bdry-dnr-wildlife-mgmt-areas-pub (WMA); https://gisdata.mn.gov/dataset/bdry-scientific-and-nat-areas (SNA); https://tnclands.tnc.org/ (TNC); https://gisdata.mn.gov/dataset/plan-mndnr-fisheries-acquisition (AMA); https://www.fws.gov/gis/data/CadastralDB/links_cadastral.html (refuges)",
+     "terms": "2020 analysis geodatabase assembled by Hennepin County for the easement model; composite of county and public layers; redistribution terms [NEEDS CONFIRM]"
+    }
+   ]
+  },
+  {
+   "field": "NS_Value",
+   "label": "Natural Spaces Nearby",
+   "category": "SC",
+   "within": 0.35,
+   "divisor": 3,
+   "sources": [
+    {
+     "label": "Natural Spaces (ecologically significant MLCCS areas)",
+     "agency": "Hennepin County (subset of MLCCS) plus Priority Natural Resource Corridors",
+     "date": "County edited (tracking sheet); 2020 geodatabase",
+     "url": "[not on file]",
+     "terms": "2020 analysis geodatabase assembled by Hennepin County for the easement model; composite of county and public layers; redistribution terms [NEEDS CONFIRM]"
+    }
+   ]
+  },
+  {
+   "field": "QR_Value",
+   "label": "Habitat Quality Ranking",
+   "category": "HQ",
+   "within": 0.45,
+   "divisor": 4,
+   "sources": [
+    {
+     "label": "Minnesota Land Cover Classification System (MLCCS)",
+     "agency": "Hennepin County (MLCCS, Minnesota DNR standard)",
+     "date": "County edited; 2020 geodatabase",
+     "url": "https://www.dnr.state.mn.us/mlccs/index.html",
+     "terms": "2020 analysis geodatabase assembled by Hennepin County for the easement model; composite of county and public layers; redistribution terms [NEEDS CONFIRM]"
+    },
+    {
+     "label": "Minnesota Biological Survey (MBS) sites of biodiversity significance",
+     "agency": "Minnesota DNR",
+     "date": "Fall 2020 download",
+     "url": "https://gisdata.mn.gov/dataset/biota-mcbs-sites-of-biodiversity",
+     "terms": "Minnesota Geospatial Commons, DNR open data"
+    }
+   ]
+  },
+  {
+   "field": "QC_Value",
+   "label": "Adjacent to Quality Community",
+   "category": "HQ",
+   "within": 0.1,
+   "divisor": 1,
+   "sources": [
+    {
+     "label": "Minnesota Biological Survey (MBS) sites of biodiversity significance",
+     "agency": "Minnesota DNR",
+     "date": "Fall 2020 download",
+     "url": "https://gisdata.mn.gov/dataset/biota-mcbs-sites-of-biodiversity",
+     "terms": "Minnesota Geospatial Commons, DNR open data"
+    },
+    {
+     "label": "MLCCS A or B quality communities",
+     "agency": "Hennepin County (MLCCS query M_34X = 'A' OR M_34X = 'B')",
+     "date": "County edited; 2020 geodatabase",
+     "url": "[not on file]",
+     "terms": "2020 analysis geodatabase assembled by Hennepin County for the easement model; composite of county and public layers; redistribution terms [NEEDS CONFIRM]"
+    }
+   ]
+  },
+  {
+   "field": "Lvl3_Value",
+   "label": "Habitat Diversity",
+   "category": "HQ",
+   "within": 0.45,
+   "divisor": 1,
+   "sources": [
+    {
+     "label": "Habitat diversity, MLCCS level 3 (Gini-Simpson)",
+     "agency": "Hennepin County (MLCCS level 3, CNUM > 30000)",
+     "date": "County edited; 2020 geodatabase",
+     "url": "[not on file]",
+     "terms": "2020 analysis geodatabase assembled by Hennepin County for the easement model; composite of county and public layers; redistribution terms [NEEDS CONFIRM]"
+    }
+   ]
+  },
+  {
+   "field": "Size_Value",
+   "label": "Parcel Size",
+   "category": "SZ",
+   "within": 1.0,
+   "divisor": 1,
+   "sources": [
+    {
+     "label": "Parcel polygons (v1 analysis set, 445,517 parcels)",
+     "agency": "Hennepin County parcels (Analysis Easements, Public Works Environment SDE)",
+     "date": "2024-11-21 (Ben Landers' v1 run); parcel roll date [NEEDS CONFIRM]",
+     "url": "https://gisdata.mn.gov/dataset/us-mn-state-metrogis-plan-regional-parcels (regional parcels)",
+     "terms": "Parcel IDs (PID) are kept out of this repository and its exports until Kristine's parcel-ID question is answered [NEEDS CONFIRM]; owner fields are never read"
+    }
+   ]
+  },
+  {
+   "field": "WAN_Value",
+   "label": "Wildlife Action Network Rank",
+   "category": "WP",
+   "within": 0.16,
+   "divisor": 1,
+   "sources": [
+    {
+     "label": "Wildlife Action Network (WAN)",
+     "agency": "Minnesota DNR, Minnesota Wildlife Action Plan",
+     "date": "Fall 2020 download",
+     "url": "https://gisdata.mn.gov/dataset/env-mnwap-wildlife-action-netwrk",
+     "terms": "Minnesota Geospatial Commons, DNR open data"
+    }
+   ]
+  },
+  {
+   "field": "Bird_Value",
+   "label": "Important Bird Area",
+   "category": "WP",
+   "within": 0.16,
+   "divisor": 1,
+   "sources": [
+    {
+     "label": "Important Bird Areas (IBA)",
+     "agency": "National Audubon Society (direct request)",
+     "date": "Summer 2019",
+     "url": "https://www.audubon.org/important-bird-areas",
+     "terms": "Direct request to Audubon; redistribution terms [NEEDS CONFIRM]"
+    }
+   ]
+  },
+  {
+   "field": "Bee_Value",
+   "label": "Pollinator (Bee) Habitat",
+   "category": "WP",
+   "within": 0.16,
+   "divisor": 2,
+   "sources": [
+    {
+     "label": "Bee (pollinator) habitat, 2020 layer",
+     "agency": "University of Minnesota (direct request)",
+     "date": "Fall 2019",
+     "url": "[not on file]",
+     "terms": "UMN Bee Lab product; terms [NEEDS CONFIRM]"
+    }
+   ]
+  },
+  {
+   "field": "ROD_Value",
+   "label": "Risk of Development",
+   "category": "RC",
+   "within": 1.0,
+   "divisor": 1,
+   "sources": [
+    {
+     "label": "Risk of development, 2019 Noe methodology (2020 layer)",
+     "agency": "University of Minnesota (Ryan Noe) methodology; county inputs: Generalized Land Use 2016 'Undeveloped' (Met Council), HCWI probable wetlands, PWI basins (DNR), cemeteries (MetroGIS parcels), Protected Areas",
+     "date": "Fall 2019 (methodology), Fall 2020 inputs",
+     "url": "https://gisdata.mn.gov/dataset/us-mn-state-metc-plan-generl-lnduse2016",
+     "terms": "2020 analysis geodatabase assembled by Hennepin County for the easement model; composite of county and public layers; redistribution terms [NEEDS CONFIRM]"
+    }
+   ]
+  },
+  {
+   "field": "SB_Value",
+   "label": "Shoreland Buffer Area",
+   "category": "WR",
+   "within": 0.15,
+   "divisor": 1,
+   "sources": [
+    {
+     "label": "Shoreland buffer areas (PWI watercourses and basins)",
+     "agency": "Minnesota DNR Public Waters Inventory, buffered by Hennepin County",
+     "date": "Continuous (GIS warehouse); 2020 geodatabase",
+     "url": "https://gisdata.mn.gov/dataset/water-mn-public-waters",
+     "terms": "2020 analysis geodatabase assembled by Hennepin County for the easement model; composite of county and public layers; redistribution terms [NEEDS CONFIRM]"
+    }
+   ]
+  },
+  {
+   "field": "FP_Value",
+   "label": "Floodplain Within Site",
+   "category": "WR",
+   "within": 0.2,
+   "divisor": 2,
+   "sources": [
+    {
+     "label": "FEMA floodplains (100-year and 500-year)",
+     "agency": "Federal Emergency Management Agency (FEMA), county GIS warehouse",
+     "date": "Continuous; 2020 geodatabase",
+     "url": "https://msc.fema.gov/portal/home",
+     "terms": "FEMA National Flood Hazard Layer is public"
+    }
+   ]
+  },
+  {
+   "field": "HCWI_Value",
+   "label": "Hennepin County Wetland Inventory Area",
+   "category": "WR",
+   "within": 0.2,
+   "divisor": 1,
+   "sources": [
+    {
+     "label": "Hennepin County Wetland Inventory (HCWI)",
+     "agency": "Hennepin County",
+     "date": "County edited; 2020 geodatabase",
+     "url": "[not on file]",
+     "terms": "Hennepin County GIS warehouse layer shared for the NRPC model; public release terms [NEEDS CONFIRM]"
+    }
+   ]
+  },
+  {
+   "field": "HW_Value",
+   "label": "Headwater Area",
+   "category": "WR",
+   "within": 0.15,
+   "divisor": 1,
+   "sources": [
+    {
+     "label": "Headwater catchments (DNR level 9 watersheds)",
+     "agency": "Minnesota DNR",
+     "date": "Fall 2020 download",
+     "url": "https://gisdata.mn.gov/dataset/geos-dnr-watersheds",
+     "terms": "Minnesota Geospatial Commons, DNR open data"
+    }
+   ]
+  },
+  {
+   "field": "GW_Value",
+   "label": "Groundwater Recharge, 1996-2010",
+   "category": "WR",
+   "within": 0.15,
+   "divisor": 5,
+   "sources": [
+    {
+     "label": "Mean groundwater recharge 1996-2010",
+     "agency": "US Geological Survey (statewide raster), vectorized by Hennepin County",
+     "date": "1996-2010 data; Fall 2020 download",
+     "url": "https://gisdata.mn.gov/id/dataset/geos-gw-recharge-1996-2010-mean",
+     "terms": "USGS public domain"
+    }
+   ]
+  },
+  {
+   "field": "Cont_Value",
+   "label": "Groundwater Contamination Susceptibility",
+   "category": "WR",
+   "within": 0.15,
+   "divisor": 3,
+   "sources": [
+    {
+     "label": "Groundwater contamination susceptibility (geological sensitivity)",
+     "agency": "Minnesota Geological Survey (MGS)",
+     "date": "Continuous; 2020 geodatabase",
+     "url": "[not on file]",
+     "terms": "MGS geological sensitivity; source URL not recorded [NEEDS CONFIRM]"
+    }
+   ]
+  }
+ ],
+ "rank": {
+  "ranked_count": 442996,
+  "protected_rule": "Already protected: at least 50% of the parcel's area in the 2020 protected-areas composite, the 2026 easement compilation, Three Rivers gap parks or parks of natural resource significance.",
+  "msp_rule": "MSP Airport: county parcel layer municipality 'MET AIRPORT'."
+ },
+ "shards": {
+  "path": "data/card-v1/{prefix}.json.gz",
+  "prefix_len": 5,
+  "fields": [
+   "PA_Value",
+   "NS_Value",
+   "QR_Value",
+   "QC_Value",
+   "Lvl3_Value",
+   "Size_Value",
+   "WAN_Value",
+   "Bird_Value",
+   "Bee_Value",
+   "ROD_Value",
+   "SB_Value",
+   "FP_Value",
+   "HCWI_Value",
+   "HW_Value",
+   "GW_Value",
+   "Cont_Value"
+  ],
+  "layout": "values then points, 4 decimals"
+ },
+ "checks": {
+  "category_points_vs_input_points_max_abs": {
+   "SC": 0.0,
+   "HQ": 7.105427357601002e-15,
+   "SZ": 1.7763568394002505e-15,
+   "WP": 3.552713678800501e-15,
+   "RC": 8.881784197001252e-16,
+   "WR": 4.440892098500626e-16
+  },
+  "overall_vs_category_points_max_abs": 2.1316282072803006e-14,
+  "live_category_vs_explorer_max_abs_200_sample": 4.970118283945113e-16
+ }
+}

@@ -1,0 +1,164 @@
+// One right-side container for the map's side content: "Top parcels" (js/top-parcels.js) and
+// "Parcel" (js/parcel-card.js), stacked as sections, each collapsible to its header.
+//
+// Asks (Bryan, 2026-11-12): "The table of ranks should be a right side popout and there should be
+// an option to collapse it or expand it."; "On a parcel click, instead of a popup table, have a
+// panel open on the right and a parcel scorecard be added ... it needs to behave well with the
+// table and they need to have sensible collapse and open options."
+//
+// Why one container, not two drawers: one edge, one width, one view padding; the sections cannot
+// cover each other, and the whole container collapses to one strip.
+// - Container modes: open | wide (all table columns; reads over the map) | collapsed (a slim strip
+//   naming what is inside). Edge handle and strip toggle it; Escape collapses it. Kept in
+//   localStorage (try/catch: a private window keeps it for the page only).
+// - Sections: shown or hidden (the toolbar button / a close button), expanded or collapsed to
+//   their header (a button with aria-expanded). Two expanded sections share the height.
+// - An explicit open (the toolbar button, a parcel click) always expands a collapsed container;
+//   the width choice (open / wide) is what carries over a reload.
+// - View padding: while the container is shown the view is padded by its width, so the Zoom to
+//   tool's goTo, a row's Zoom to and the map's own corner buttons sit beside it. On a phone the
+//   open container covers the map; the padding is the collapsed strip.
+//
+// Exposes window.NRPCSidePanel.init(view) -> { section(id, title, order), setMode(m), mode,
+// layout(), isPhone() }.
+
+window.NRPCSidePanel = (() => {
+  const KEY = "nrpc.side.mode";
+  const store = {
+    get(k, d) { try { const v = localStorage.getItem(k); return v === null ? d : v; } catch (e) { return d; } },
+    set(k, v) { try { localStorage.setItem(k, v); } catch (e) { /* private window: page only */ } },
+  };
+  let view, el, body, handle, strip, stripLabel, wideBtn, basePadding = null;
+  let mode = "open", lastOpen = "open";
+  const sections = [];
+  const isPhone = () => window.innerWidth <= 760;
+
+  function shown() { return sections.some(s => s.visible); }
+
+  function setMode(m, focus) {
+    if (m === "wide" && isPhone()) m = "open";
+    mode = m;
+    if (m !== "collapsed") lastOpen = m;
+    store.set(KEY, m);
+    layout();
+    if (focus) (m === "collapsed" ? strip : handle).focus();
+  }
+
+  function openWidth() {
+    const css = getComputedStyle(el).getPropertyValue("--sp-open-w").trim() || "480px";
+    const probe = document.createElement("div");
+    probe.style.cssText = `position:absolute;visibility:hidden;width:${css}`;
+    document.body.appendChild(probe);
+    const px = probe.getBoundingClientRect().width; probe.remove();
+    return px;
+  }
+
+  function layout() {
+    const on = shown();
+    el.classList.toggle("hidden", !on);
+    el.classList.toggle("sp-collapsed", mode === "collapsed");
+    el.classList.toggle("sp-wide", mode === "wide");
+    handle.setAttribute("aria-expanded", mode === "collapsed" ? "false" : "true");
+    handle.setAttribute("aria-label", mode === "collapsed" ? "Expand the side panel" : "Collapse the side panel");
+    handle.firstElementChild.innerHTML = mode === "collapsed" ? "&lsaquo;" : "&rsaquo;";
+    strip.setAttribute("aria-expanded", mode === "collapsed" ? "false" : "true");
+    wideBtn.setAttribute("aria-pressed", mode === "wide" ? "true" : "false");
+    wideBtn.textContent = mode === "wide" ? "Narrower" : "Wider";
+    const vis = sections.filter(s => s.visible).sort((a, b) => a.order - b.order);
+    stripLabel.textContent = vis.map(s => s.stripText()).join("  |  ") || "Panel";
+    vis.forEach((s, i) => { s.el.classList.toggle("sp-first", i === 0); });
+    // two expanded sections share the height; one expanded takes the rest
+    const exp = vis.filter(s => s.expanded);
+    vis.forEach(s => { s.el.style.flex = s.expanded ? (exp.length > 1 ? "1 1 0" : "1 1 auto") : "0 0 auto"; });
+    if (basePadding === null) basePadding = { ...view.padding };
+    let right = 0;
+    if (on) {
+      if (mode === "collapsed" || isPhone()) right = 40;
+      else if (mode === "wide") right = openWidth();      // wide reads over the map
+      else right = el.getBoundingClientRect().width;
+    }
+    view.padding = { ...basePadding, right: (basePadding.right || 0) + Math.round(right) };
+  }
+
+  // A section: header button (title + one-line summary + chevron) and a body.
+  function section(id, title, order) {
+    const sec = document.createElement("section");
+    sec.className = "sp-section hidden";
+    sec.id = `sp-${id}`;
+    sec.style.order = order;
+    sec.innerHTML = `
+      <div class="sp-sec-head">
+        <button type="button" class="sp-sec-toggle" aria-expanded="true" aria-controls="sp-${id}-body">
+          <span class="sp-chev" aria-hidden="true"></span>
+          <span class="sp-sec-title"></span>
+          <span class="sp-sec-sum"></span>
+        </button>
+        <button type="button" class="sp-sec-close" aria-label="Close ${title}">&times;</button>
+      </div>
+      <div class="sp-sec-body" id="sp-${id}-body"></div>`;
+    sec.querySelector(".sp-sec-title").textContent = title;
+    body.appendChild(sec);
+    const tgl = sec.querySelector(".sp-sec-toggle");
+    const s = {
+      id, title, order, el: sec, body: sec.querySelector(".sp-sec-body"), visible: false,
+      expanded: store.get(`nrpc.side.${id}.expanded`, "1") === "1", summary: "",
+      onShow: null, onHide: null,
+      stripText() { return this.summary ? `${title} · ${this.summary}` : title; },
+      setSummary(t) { this.summary = t || ""; sec.querySelector(".sp-sec-sum").textContent = this.summary; layout(); },
+      expand(v = true) {
+        this.expanded = v; store.set(`nrpc.side.${id}.expanded`, v ? "1" : "0");
+        sec.classList.toggle("sp-sec-collapsed", !v);
+        tgl.setAttribute("aria-expanded", v ? "true" : "false");
+        layout();
+      },
+      show(v = true) {
+        if (this.visible === v) { if (v && mode === "collapsed") setMode(lastOpen); return; }
+        this.visible = v;
+        sec.classList.toggle("hidden", !v);
+        if (v && mode === "collapsed") mode = lastOpen;
+        layout();
+        (v ? this.onShow : this.onHide)?.();
+      },
+    };
+    s.expand(s.expanded);
+    tgl.addEventListener("click", () => s.expand(!s.expanded));
+    sec.querySelector(".sp-sec-close").addEventListener("click", () => s.show(false));
+    sections.push(s);
+    return s;
+  }
+
+  function init(v) {
+    view = v;
+    el = document.createElement("aside");
+    el.id = "side-panel";
+    el.className = "hidden";
+    el.setAttribute("aria-label", "Side panel");
+    el.innerHTML = `
+      <button type="button" class="sp-handle" aria-controls="sp-body" aria-expanded="true"
+              aria-label="Collapse the side panel"><span aria-hidden="true">&rsaquo;</span></button>
+      <button type="button" class="sp-strip" aria-controls="sp-body" aria-expanded="false"
+              aria-label="Expand the side panel"><span class="sp-strip-label"></span></button>
+      <div class="sp-top"><button type="button" class="sp-wide" aria-pressed="false">Wider</button></div>
+      <div class="sp-body" id="sp-body"></div>`;
+    document.body.appendChild(el);
+    body = el.querySelector(".sp-body");
+    handle = el.querySelector(".sp-handle");
+    strip = el.querySelector(".sp-strip");
+    stripLabel = el.querySelector(".sp-strip-label");
+    wideBtn = el.querySelector(".sp-wide");
+    handle.addEventListener("click", () => setMode(mode === "collapsed" ? lastOpen : "collapsed", true));
+    strip.addEventListener("click", () => setMode(lastOpen, true));
+    wideBtn.addEventListener("click", () => setMode(mode === "wide" ? "open" : "wide", true));
+    el.addEventListener("keydown", e => {
+      if (e.key === "Escape" && mode !== "collapsed") { e.stopPropagation(); setMode("collapsed", true); }
+    });
+    window.addEventListener("resize", () => layout());
+    const saved = store.get(KEY, "open");
+    mode = ["open", "wide", "collapsed"].includes(saved) ? saved : "open";
+    if (mode !== "collapsed") lastOpen = mode;
+    return { section, setMode, layout, isPhone, get: id => sections.find(x => x.id === id),
+             get mode() { return mode; }, get el() { return el; } };
+  }
+
+  return { init };
+})();
