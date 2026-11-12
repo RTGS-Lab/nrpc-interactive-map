@@ -1186,6 +1186,15 @@ require([
         .map(l => ({ layer: l, enabled: opportunityLayers.includes(l) }));
       editor = new Editor({ view, container: contributeContainer, layerInfos: editorLayerInfos,
                             visibleElements: { settingsMenu: false, snappingControls: false } });
+      // The 4.29 Editor titles its first step "Editor"; say what to do instead. Re-applied when
+      // the widget re-renders that step.
+      const HEADING = "Pick a layer, then draw on the map";
+      const retitle = () => contributeContainer.querySelectorAll("calcite-flow-item").forEach(fi => {
+        if (fi.heading === "Editor") fi.heading = HEADING;
+      });
+      new MutationObserver(retitle).observe(contributeContainer,
+        { subtree: true, childList: true, attributes: true, attributeFilter: ["heading"] });
+      retitle();
     }
 
     // ── Toggle handlers ───────────────────────────────────────────────────────

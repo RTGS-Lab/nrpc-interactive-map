@@ -778,7 +778,10 @@ body,
 /* 9: Contribute shows only the editor's own steps; Esri legend group headings stay small */
 #contribute-wrapper { height: auto; max-height: 70vh; }
 #contribute-container .esri-editor__header .esri-editor__back-button + * { font-size: 14px; }
-.esri-legend__service-label { font-size: 13px; font-weight: 600; }
+#legend-container h3.esri-legend__service-label { font-size: 13px !important; font-weight: 600; margin: 6px 0 2px; }
+#legend-container .esri-legend__group-layer .esri-legend__group-layer h3.esri-legend__service-label { font-weight: 400; font-size: 12.5px !important; }
+/* the 4.29 Editor's Settings (snapping) block: not offered (finding 9) */
+#contribute-container calcite-accordion { display: none !important; }
 .esri-legend__layer-caption { font-size: 12.5px; }
 
 /* 2: phone: wrapping toolbar, 44 px targets, panels that fit, menus inside the screen */
