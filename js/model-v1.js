@@ -337,20 +337,34 @@ window.NRPCModelV1 = (() => {
       `border-color:rgb(${WATER_EDGE.slice(0, 3)})"></span><span class="ml-label">Water</span>`;
     const modelBlock = document.createElement("div");
     modelBlock.append(head, ramp, note);
-    box.append(modelBlock, waterRow);
+    // one status line: "Zoom in to see parcels" beyond the model's scale; "Drawing parcels..."
+    // while the model layer draws (UI review findings 18, 19)
+    const status = document.createElement("div");
+    status.className = "ml-status";
+    status.setAttribute("role", "status");
+    box.append(status, modelBlock, waterRow);
     container.prepend(box);
 
     const on = l => { let p = l; while (p && p !== view.map) { if (!p.visible) return false; p = p.parent; } return true; };
+    let drawing = false;
     function refresh() {
       const s = view.scale;
-      const modelOn = model && on(model.layer) && s <= MODEL_MIN_SCALE;
+      const layerOn = model && on(model.layer);
+      const modelOn = layerOn && s <= MODEL_MIN_SCALE;
       modelBlock.style.display = modelOn ? "" : "none";
-      note.textContent = s <= OUTLINE_SCALE ? "Drawn: parcels, with outlines"
-                                            : "Drawn: parcels (outlines from about 1:32,500)";
+      note.textContent = s <= OUTLINE_SCALE ? "" : "Parcel outlines appear when zoomed in.";
+      note.style.display = note.textContent ? "" : "none";
+      status.textContent = layerOn && s > MODEL_MIN_SCALE ? `${MODEL_TITLE}: zoom in to see parcels.`
+        : modelOn && drawing ? "Drawing parcels..." : "";
+      status.style.display = status.textContent ? "" : "none";
       waterRow.style.display = water && on(water.fill) ? "" : "none";
       box.style.display = modelBlock.style.display === "none" && waterRow.style.display === "none"
-        ? "none" : "";
+        && status.style.display === "none" ? "none" : "";
     }
+    if (model && model.layer) view.whenLayerView(model.layer).then(lv => {
+      lv.watch("updating", u => { drawing = u; refresh(); });
+      drawing = lv.updating; refresh();
+    }).catch(() => {});
     view.watch("stationary", refresh);
     [model && model.layer, model && model.group, water && water.group, water && water.fill,
      water && water.natsys]

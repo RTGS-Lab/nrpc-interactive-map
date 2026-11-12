@@ -150,8 +150,9 @@ window.NRPCProtected = (() => {
     };
     const protRow = row("ml-protected", LABEL);
     const mspRow = row("ml-protected ml-msp", MSP_LABEL);
+    // the scope sentence lives inside "How classes are set" (UI review, finding 3)
     const scope = document.createElement("div");
-    scope.className = "ml-note ml-scope";
+    scope.className = "ml-how-text ml-scope";
     scope.textContent = `${fmt(D.parcels_ranked)} parcels ranked; already-protected ` +
       `(${fmt(D.parcels_protected)}) and MSP Airport (${fmt(D.parcels_msp)}) parcels are not ranked.`;
 
@@ -174,11 +175,10 @@ window.NRPCProtected = (() => {
       li.textContent = `${c.name}: ranks ${fmt(c.lo)} to ${fmt(c.hi)} (${share})`;
       list.appendChild(li);
     });
-    how.append(sum, p1, list);
+    how.append(sum, scope, p1, list);
     ramp.after(protRow);
     protRow.after(mspRow);
-    mspRow.after(scope);
-    scope.after(how);
+    mspRow.after(how);
   }
 
   return { apply, decorateLegend, rankOf, classRanges, LABEL, MSP_LABEL };

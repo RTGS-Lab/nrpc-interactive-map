@@ -122,9 +122,19 @@ window.NRPCParcelCard = (() => {
     return f;
   }
 
-  function focusHeading() {
-    const h = el.querySelector(".pc-title");
-    if (h) h.focus({ preventScroll: false });
+  // The section header is the card's one heading (UI review, finding 12).
+  function focusHeading() { sec.focusHeader(); }
+
+  // Zoom to the selected parcel with the Zoom to tool's own zoom; a lot is framed in >= 500 m.
+  async function zoomTo() {
+    const f = current && current.feature;
+    if (!f) return;
+    if (side.mode === "wide") side.setMode("open");
+    let e = f.geometry.extent.clone();
+    const grow = 500 / Math.max(e.width, e.height, 1);
+    if (grow > 1) e = e.expand(grow);
+    if (side.isPhone()) side.setMode("collapsed");              // show the map, keep the strip
+    await window.NRPCZoomTo.zoomToExtent(e, window.NRPCZoomTo.AREA_FACTOR);
   }
 
   async function setHighlight(f) {
@@ -143,16 +153,16 @@ window.NRPCParcelCard = (() => {
   }
 
   // ── render ───────────────────────────────────────────────────────────────────────────────
+  // "(top 0.9%)"; nothing for the top 0.1%, where the rank says it plainly (finding 11)
   function topPct(rank) {
     const x = 100 * rank / D.parcels_ranked;
-    return `${x.toFixed(x >= 10 ? 0 : x >= 1 ? 1 : x >= 0.1 ? 2 : 3)}%`;
+    return x < 0.1 ? "" : ` (top ${x.toFixed(x >= 10 ? 0 : 1)}%)`;
   }
 
   function renderCard(pid, f, r, inputs, addr) {
     sec.setSummary(pid);
     if (!f) {
-      el.innerHTML = `<h3 class="pc-title" tabindex="-1">Parcel ${esc(pid)}</h3>
-        <p class="pc-status">Not in this model run.</p>`;
+      el.innerHTML = `<p class="pc-status">Parcel ${esc(pid)}: not in this model run.</p>`;
       return;
     }
     const a = f.attributes;
@@ -169,7 +179,7 @@ window.NRPCParcelCard = (() => {
     else if (isMsp) rankHtml = `<p class="pc-rank"><strong>MSP Airport: not ranked</strong></p>
         <p class="pc-rule">${esc(r.rank.msp_rule)}</p>`;
     else rankHtml = `<p class="pc-rank">Rank <strong>${fmt(rank)}</strong> of ${fmt(D.parcels_ranked)}
-        ranked parcels (top ${topPct(rank)})</p>
+        ranked parcels${topPct(rank)}</p>
         <p class="pc-class"><span class="pc-swatch" style="background:${C[cls].color}"></span>${esc(C[cls].label)}</p>`;
 
     // bars: earned = 100 x weight x category score (live layer); possible = 100 x weight
@@ -201,12 +211,12 @@ window.NRPCParcelCard = (() => {
           <th scope="row">${esc(c.label)} <span class="pc-w">${Math.round(100 * c.weight)}%</span></th>
           <td class="pc-barcell"><div class="pc-bar" aria-hidden="true">
               <div class="pc-fill" style="width:${pct(c.earned)}"></div>
-              <div class="pc-mark pc-p50" style="left:${pct(c.county.p50)}"></div>
-              <div class="pc-mark pc-p90" style="left:${pct(c.county.p90)}"></div></div></td>
-          <td class="pc-num">${c.earned.toFixed(1)} of ${c.possible.toFixed(0)}</td>
+              <div class="pc-mark pc-p50" style="left:${pct(c.county.p50)}" title="County median ${c.county.p50.toFixed(1)}"></div>
+              <div class="pc-mark pc-p90" style="left:${pct(c.county.p90)}" title="90th percentile ${c.county.p90.toFixed(1)}"></div></div></td>
+          <td class="pc-num">${c.earned.toFixed(1)} of ${c.possible.toFixed(0)}<span class="tp-sr">; county median
+            ${c.county.p50.toFixed(1)}, 90th percentile ${c.county.p90.toFixed(1)}</span></td>
         </tr>
-        <tr class="pc-sub"><td colspan="3"><span class="pc-county">County median ${c.county.p50.toFixed(1)},
-          90th percentile ${c.county.p90.toFixed(1)} (ranked parcels)</span>${inputsHtml}</td></tr>`;
+        ${inputsHtml ? `<tr class="pc-sub"><td colspan="3">${inputsHtml}</td></tr>` : ""}`;
     }).join("");
 
     // why this score: template from the numbers on the card
@@ -230,17 +240,18 @@ window.NRPCParcelCard = (() => {
     const acres = a.Shape__Area ? a.Shape__Area / 4046.8564224 : null;
     const notRanked = isProt ? "Already protected -- not ranked" : isMsp ? "MSP Airport -- not ranked" : null;
     el.innerHTML = `
-      <h3 class="pc-title" tabindex="-1">Parcel ${esc(pid)}</h3>
-      ${addr ? `<p class="pc-addr">${esc(addr)}</p>` : ""}
+      <div class="pc-head">
+        <p class="pc-addr">${addr ? esc(addr) : "&nbsp;"}</p>
+        <button type="button" class="pc-zoom">Zoom to</button>
+      </div>
       <p class="pc-run">${esc(r.label)}</p>
       <p class="pc-score"><span class="pc-big">${overall.toFixed(1)}</span> of 100 overall score</p>
       ${rankHtml}
       <h4>Category points</h4>
       ${sumOk ? `<table class="pc-bars"><caption class="tp-sr">Points earned of points possible, by category</caption>
         <tbody>${barRows}</tbody></table>
-        <p class="pc-sum">The six categories add up to the overall score: ${sum.toFixed(4)} = ${overall.toFixed(4)}.</p>
-        <p class="pc-legend"><span class="pc-key pc-key-50"></span>county median
-          <span class="pc-key pc-key-90"></span>90th percentile, of ranked parcels</p>`
+        <p class="pc-legend">Tick marks: <span class="pc-key pc-key-50"></span>county median and
+          <span class="pc-key pc-key-90"></span>90th percentile of ranked parcels.</p>`
         : `<p class="pc-status">Data mismatch: the categories add up to ${sum.toFixed(4)}, the overall score is
           ${overall.toFixed(4)}. Bars hidden.</p>`}
       <h4>Why this score</h4>
@@ -254,7 +265,12 @@ window.NRPCParcelCard = (() => {
           <tr><th scope="row">Published rank, all parcels (v1.0)</th><td>${fmt(a.Rank)}</td></tr>
           <tr><th scope="row">Overall Value</th><td>${overall.toFixed(4)}</td></tr>
           ${acres ? `<tr><th scope="row">Area</th><td>${acres.toFixed(2)} acres</td></tr>` : ""}
-        </tbody></table></details>`;
+        </tbody></table>
+        <p class="pc-note">The published rank counts all ${fmt(D.parcels_total)} parcels; the rank above
+          leaves out already-protected and MSP Airport parcels.</p>
+        ${sumOk ? `<p class="pc-note">Check: the six category points add up to the overall score
+          (${overall.toFixed(4)}).</p>` : ""}</details>`;
+    el.querySelector(".pc-zoom")?.addEventListener("click", () => zoomTo());
   }
 
   function init(v, m, s) {
@@ -273,7 +289,7 @@ window.NRPCParcelCard = (() => {
       const g = hit.results.find(x => x.graphic && x.graphic.layer === model.layer);
       if (g && g.graphic.attributes && g.graphic.attributes.PID) select(g.graphic.attributes.PID, { from: "map" });
     });
-    const api = { select, clear, turnModelOn, onChange: fn => listeners.push(fn),
+    const api = { select, clear, zoomTo, turnModelOn, onChange: fn => listeners.push(fn),
                   get pid() { return current && current.pid; },
                   get feature() { return current && current.feature; },
                   get numbers() { return current && current.numbers; }, section: sec };

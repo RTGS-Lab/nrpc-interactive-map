@@ -87,6 +87,12 @@ require([
     const protectedV1 = window.NRPCProtected
       ? window.NRPCProtected.apply(view, { GeoJSONLayer }, modelV1.model) : null;
     if (new URLSearchParams(location.search).has("debug")) window.__nrpc = { view, modelV1, protectedV1 };
+    // Open with the model drawn (UI review 2026-11-12, finding 1). Set before the LayerList
+    // exists, so its "turn on all children" watcher does not fire.
+    if (modelV1.model) {
+      let l = modelV1.model.layer;
+      while (l && l !== view.map) { l.visible = true; l = l.parent; }
+    }
 
     // The Zoom to tool's one zoom path, shared with the Top parcels table (js/top-parcels.js):
     // same goTo, default animation, extent grown by the same factor.
@@ -94,9 +100,11 @@ require([
     window.NRPCZoomTo = { zoomToExtent, AREA_FACTOR: 1.5 };
     view.ui.add(new ScaleBar({ view, unit: "imperial" }), "bottom-left");
 
-    const openTabBtn = document.createElement("div");
+    const openTabBtn = document.createElement("button");     // a real button: keyboard reachable
+    openTabBtn.type = "button";
     openTabBtn.className = "esri-widget esri-widget--button esri-interactive";
     openTabBtn.title = "Open in new tab";
+    openTabBtn.setAttribute("aria-label", "Open the map in a new tab");
     openTabBtn.innerHTML = `<span class="esri-icon esri-icon-launch-link-external"></span>`;
     openTabBtn.addEventListener("click", () => window.open(window.location.href, "_blank"));
     view.ui.add(openTabBtn, { position: "top-right", index: 0 });
@@ -114,13 +122,13 @@ require([
 
     const legendToggle = document.createElement("button");
     legendToggle.id = "legend-toggle";
-    legendToggle.className = "panel-toggle";
+    legendToggle.className = "panel-toggle active";
     legendToggle.textContent = "Legend";
     toggleBar.appendChild(legendToggle);
 
     const layersToggle = document.createElement("button");
     layersToggle.id = "layers-toggle";
-    layersToggle.className = "panel-toggle active";
+    layersToggle.className = "panel-toggle";
     layersToggle.textContent = "Layers";
     toggleBar.appendChild(layersToggle);
 
@@ -168,7 +176,7 @@ require([
     const citySearch = document.createElement("input");
     citySearch.id = "city-search";
     citySearch.type = "text";
-    citySearch.placeholder = "Search...";
+    citySearch.placeholder = "Search a city or district...";
     citySearchWrapper.appendChild(citySearch);
 
     const citySearchClear = document.createElement("button");
@@ -324,7 +332,7 @@ require([
     // Legend panel (hidden by default)
     const legendWrapper = document.createElement("div");
     legendWrapper.id = "legend-wrapper";
-    legendWrapper.classList.add("panel", "hidden");
+    legendWrapper.classList.add("panel");          // open at load (UI review, finding 1)
     panelsContainer.appendChild(legendWrapper);
 
     const legendTitle = document.createElement("div");
@@ -346,7 +354,7 @@ require([
     // Layer list panel (visible by default)
     const layerListWrapper = document.createElement("div");
     layerListWrapper.id = "layer-list-wrapper";
-    layerListWrapper.classList.add("panel");
+    layerListWrapper.classList.add("panel", "hidden");   // closed at load; Legend shows the model
     panelsContainer.appendChild(layerListWrapper);
 
     const layersTitle = document.createElement("div");
@@ -386,6 +394,7 @@ require([
 
     new LayerList({
       view,
+      visibilityAppearance: "checkbox",
       container: layerListContainer,
       listItemCreatedFunction: ({ item }) => {
         const layer = item.layer;
@@ -653,7 +662,7 @@ require([
       fullCountySelected = true;
       // Uncheck all individual cities (not the Full County checkbox itself)
       cityCheckboxScroll.querySelectorAll("input[type=checkbox]:not(#city-cb-full-county)").forEach(cb => (cb.checked = false));
-      cityDropdownBtn.textContent = "Full county selected";
+      cityDropdownBtn.textContent = "Zoom to (county)";
       cityZoomBtn.disabled = false;
 
       const applyCounty = geom => {
@@ -765,7 +774,7 @@ require([
             const total = cityCheckboxScroll.querySelectorAll("input[data-type]:checked").length;
             cityDropdownBtn.textContent = total === 0
               ? "Zoom to..."
-              : `${total} ${total === 1 ? "area" : "areas"} selected`;
+              : `Zoom to (${total})`;
             cityZoomBtn.disabled = total === 0;
             updateHighlight();
             updateClipGeometry();
@@ -889,7 +898,7 @@ require([
             const total = cityCheckboxScroll.querySelectorAll("input[data-type]:checked").length;
             cityDropdownBtn.textContent = total === 0
               ? "Zoom to..."
-              : `${total} ${total === 1 ? "area" : "areas"} selected`;
+              : `Zoom to (${total})`;
             cityZoomBtn.disabled = total === 0;
             updateHighlight();
             updateClipGeometry();
@@ -1157,14 +1166,27 @@ require([
 
     const contributeTitle = document.createElement("div");
     contributeTitle.className = "panel-title";
-    contributeTitle.textContent = "Contribute";
+    contributeTitle.textContent = "Add an opportunity area";
     contributeWrapper.appendChild(contributeTitle);
 
     const contributeContainer = document.createElement("div");
     contributeContainer.id = "contribute-container";
     contributeWrapper.appendChild(contributeContainer);
 
-    new Editor({ view, container: contributeContainer });
+    // Only the two Opportunity Area layers are offered; every other editable layer (e.g. the
+    // Water names helper) is switched off; no Settings / snapping menu (UI review, finding 9).
+    // Built on first open, so helper layers added after load (Water names, rivers) are listed
+    // and switched off too.
+    let editor = null;
+    function buildEditor() {
+      if (editor) return;
+      const opportunityLayers = view.map.allLayers.filter(l =>
+        l.type === "feature" && /Opportunity Area/i.test(l.title || "")).toArray();
+      const editorLayerInfos = view.map.allLayers.filter(l => l.type === "feature").toArray()
+        .map(l => ({ layer: l, enabled: opportunityLayers.includes(l) }));
+      editor = new Editor({ view, container: contributeContainer, layerInfos: editorLayerInfos,
+                            visibleElements: { settingsMenu: false, snappingControls: false } });
+    }
 
     // ── Toggle handlers ───────────────────────────────────────────────────────
     legendToggle.addEventListener("click", () => {
@@ -1180,6 +1202,7 @@ require([
     );
 
     contributeToggle.addEventListener("click", () => {
+      buildEditor();
       const opening = contributeWrapper.classList.toggle("hidden") === false;
       contributeToggle.classList.toggle("active");
       if (opening && opportunityGroup && !opportunityGroup.visible) {
@@ -1221,5 +1244,9 @@ require([
         });
         autoLegendHandles.push(handle);
       });
+
+    // Layout, UX and accessibility fixes from the UI review (js/ui-fixes.js)
+    if (window.NRPCUiFixes) window.NRPCUiFixes.init(view, { modelV1, sidePanel, legendWrapper, layerListWrapper,
+      contributeWrapper, toggleBar, panelsContainer });
   });
 });

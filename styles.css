@@ -53,7 +53,7 @@ body,
   border: 1px solid #ccc;
   border-radius: 4px;
   box-shadow: 0 2px 8px rgba(0,0,0,0.15);
-  max-height: 220px;
+  max-height: min(60vh, 520px);
   overflow: hidden;
   display: flex;
   flex-direction: column;
@@ -96,7 +96,7 @@ body,
   border: none;
   cursor: pointer;
   font-size: 16px;
-  color: #999;
+  color: #666;
   line-height: 1;
   padding: 0;
 }
@@ -188,7 +188,9 @@ body,
 
 
 .panel {
-  height: 300px;
+  box-sizing: border-box;
+  height: auto;
+  max-height: 45vh;
   width: 300px;
   overflow: hidden;
   display: flex;
@@ -253,7 +255,7 @@ body,
   border: none;
   cursor: pointer;
   font-size: 16px;
-  color: #999;
+  color: #666;
   line-height: 1;
   padding: 0;
 }
@@ -404,7 +406,7 @@ body,
 
 #clip-warning {
   font-size: 12px;
-  color: #888;
+  color: #666;
   font-family: inherit;
   line-height: 1.5;
   font-style: italic;
@@ -450,7 +452,7 @@ body,
   padding: 5px 10px 2px;
   font-size: 11px;
   font-weight: 600;
-  color: #888;
+  color: #666;
   text-transform: uppercase;
   letter-spacing: 0.04em;
 }
@@ -500,7 +502,8 @@ body,
    any other layer legends scroll underneath it. */
 #legend-wrapper.panel {
   height: auto;
-  max-height: calc(100vh - 90px);
+  max-height: 50vh;
+  overflow-y: auto;      /* the model block + the Esri legend scroll together */
 }
 
 #legend-container {
@@ -761,4 +764,66 @@ body,
   #sp-top .tp-body { padding: 6px 8px 8px; gap: 4px; }
   #sp-top .tp-status { font-size: 11px; }
   .pc-card summary { min-height: 44px; display: flex; align-items: center; }
+}
+
+/* ── UI review fixes (js/ui-fixes.js; 13-output-20261112-nrpc-map-ui-review.md) ───────────── */
+/* 7: transparent backdrop under an open menu: an outside click closes it and goes no further */
+#menu-backdrop { position: fixed; inset: 0; z-index: 190; background: transparent; }
+#menu-backdrop.hidden { display: none; }
+/* 16: Zoom to keeps one width whatever its count */
+#city-dropdown-btn { min-width: 8.6em; white-space: nowrap; }
+/* 10: visible keyboard focus on the toolbar and panels */
+.panel-toggle:focus-visible, #city-zoom-btn:focus-visible, #city-clear-btn:focus-visible,
+.esri-widget--button:focus-visible { outline: 2px solid #1D5A8E; outline-offset: 2px; }
+/* 9: Contribute shows only the editor's own steps; Esri legend group headings stay small */
+#contribute-wrapper { height: auto; max-height: 70vh; }
+#contribute-container .esri-editor__header .esri-editor__back-button + * { font-size: 14px; }
+.esri-legend__service-label { font-size: 13px; font-weight: 600; }
+.esri-legend__layer-caption { font-size: 12.5px; }
+
+/* 2: phone: wrapping toolbar, 44 px targets, panels that fit, menus inside the screen */
+@media (max-width: 760px) {
+  #toggle-bar { flex-wrap: wrap; max-width: calc(100vw - 88px); gap: 4px; }
+  .panel-toggle { height: 44px; min-width: 44px; font-size: 14px; padding: 0 9px; }
+  #home-container .esri-widget--button { width: 44px !important; height: 44px !important; }
+  .panel { width: calc(100vw - 30px); max-height: 40vh; }
+  #legend-wrapper.panel { max-height: 40vh; }
+  #contribute-wrapper { width: calc(100vw - 30px); max-height: 60vh; }
+  #city-dropdown-list, #basemap-dropdown, #clip-zip-dropdown { max-width: calc(100vw - 16px); }
+  #city-dropdown-list { max-height: min(60vh, 520px); }
+  .city-checkbox-item { min-height: 40px; }
+  #city-zoom-btn, #city-clear-btn { min-height: 44px; }
+}
+#model-legend .ml-status { font-size: 12px; color: #1D5A8E; font-weight: 600; margin: 0 0 6px; }
+
+/* ── UI review fixes, side panel (findings 4, 5, 12-15) ── */
+#side-panel .sp-sec-extra { display: flex; align-items: center; }
+#side-panel .sp-sec-extra .sp-wide { margin-right: 2px; }
+#side-panel .sp-sec-collapsed .sp-sec-extra { display: none; }
+#side-panel .sp-sec-toggle:focus-visible { outline: 2px solid #1D5A8E; outline-offset: -4px; }
+#side-panel .sp-sec-close:focus-visible, #side-panel .sp-handle:focus-visible,
+#side-panel .sp-strip:focus-visible { outline: 2px solid #1D5A8E; outline-offset: -3px; }
+#sp-top table { table-layout: auto; }
+#sp-top td.tp-pid { font-variant-numeric: tabular-nums; }
+#sp-top td.tp-addr { white-space: normal; min-width: 84px; }
+@media (max-width: 760px) { #sp-top td.tp-addr { min-width: 84px; } }
+#sp-top td, #sp-top th { padding-left: 4px; padding-right: 4px; }
+#sp-top table { font-size: 12px; }
+#sp-top td.tp-city { white-space: normal; }
+#sp-top tr.tp-actions td { padding: 2px 6px 8px; background: #eef8fd; border-bottom: 1px solid #d6eef8; }
+#sp-top tr.tp-actions .tp-zoom { height: 30px; font-size: 12.5px; }
+#sp-top .tp-swatch { margin-right: 0; width: 14px; height: 14px; }
+.pc-card .pc-head { display: flex; align-items: center; gap: 8px; }
+.pc-card .pc-head .pc-addr { flex: 1; margin: 0; }
+.pc-card .pc-zoom {
+  height: 32px; padding: 0 12px; border: 1px solid #ccc; border-radius: 3px; background: white;
+  cursor: pointer; font-family: inherit; font-size: 13px;
+}
+.pc-card .pc-zoom:hover { background: #f3f3f3; }
+.pc-card .pc-zoom:focus-visible, .pc-card summary:focus-visible { outline: 2px solid #1D5A8E; outline-offset: 2px; }
+.pc-card .pc-note { font-size: 12px; color: #555; margin: 6px 0 0; }
+.pc-card .pc-legend { margin-top: 6px; }
+@media (max-width: 760px) {
+  #sp-top .tp-hide-phone { display: none; }
+  .pc-card .pc-zoom { height: 44px; }
 }
