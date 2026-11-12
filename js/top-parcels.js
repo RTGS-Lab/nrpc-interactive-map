@@ -17,6 +17,12 @@
 //   Picking Hennepin County clears the Zoom to selection and does not move the map.
 // - A row selects the parcel through the map's popup (the same selection a map click makes); its
 //   Zoom to button uses window.NRPCZoomTo.zoomToExtent, the Zoom to tool's own zoom.
+// - Drawer (Bryan, 2026-11-12: "a right side popout ... an option to collapse it or expand it"):
+//   docked to the map's right edge; states open, wide (all columns) and collapsed (a slim strip
+//   with the title and scope); the state is kept in localStorage. While the drawer is shown the
+//   view is padded by its width, so every goTo (the Zoom to tool's and a row's) and the popup land
+//   beside it. On a phone the open drawer covers the map; the padding is the collapsed strip and
+//   a row tap collapses the drawer so the parcel and its popup show.
 // - One parcel highlight at a time: the popup's. The selected row follows the popup (a map click
 //   on a listed parcel marks its row; closing the popup clears it); a scope change that drops the
 //   selected parcel closes the popup.
@@ -28,7 +34,7 @@ window.NRPCTopParcels = (() => {
   let view, model, data = null, loading = null;
   let scope = { kind: "county" };    // {kind: county} | {kind: city|watershed, names: [..]}
   let shown = PAGE, rows = [], selectedPid = null, driving = false;
-  let panel, btn, kindSel, areaSel, scopeNote, tbody, moreBtn, countLine, statusLine;
+  let panel, btn, kindSel, areaSel, scopeNote, tbody, moreBtn, countLine, statusLine, stripLabel;
 
   // ── Zoom to tool (its own DOM: #city-checkbox-scroll, #city-zoom-btn, #city-clear-btn) ──────
   const zt = {
@@ -116,6 +122,7 @@ window.NRPCTopParcels = (() => {
   function render() {
     rows = rowsFor(scope);
     const D = window.NRPCProtectedV1;
+    stripLabel.textContent = `Top parcels · ${scopeLabel(scope)}`;
     scopeNote.textContent = `Top parcels in ${scopeLabel(scope)}` +
       (scope.kind !== "county" && zt.checked().kind !== "county" ? " (linked to Zoom to)" : "");
     statusLine.textContent = `Rank = rank among ${fmt(data.parcels_ranked)} ranked parcels. Not ` +
@@ -190,11 +197,13 @@ window.NRPCTopParcels = (() => {
     if (!f) { statusLine.textContent = `Parcel ${pid} not found in the model layer.`; return; }
     selectedPid = pid;
     markSelected();
+    if (isPhone()) setMode("collapsed");                 // show the map, keep the strip
+    else if (zoom && mode === "wide") setMode("open");   // wide is for reading; zoom beside it
     if (zoom) {
       let e = f.geometry.extent.clone();
       const grow = MIN_PARCEL_EXTENT_M / Math.max(e.width, e.height, 1);
       if (grow > 1) e = e.expand(grow);
-      await window.NRPCZoomTo.zoomToExtent(uncoveredExtent(e), window.NRPCZoomTo.AREA_FACTOR);
+      await window.NRPCZoomTo.zoomToExtent(e, window.NRPCZoomTo.AREA_FACTOR);
     }
     const at = f.geometry.centroid || f.geometry.extent.center;
     view.openPopup({ features: [f], location: at });
@@ -245,12 +254,16 @@ window.NRPCTopParcels = (() => {
     panel.className = "hidden";
     panel.setAttribute("aria-label", "Top parcels");
     panel.innerHTML = `
+      <button type="button" class="tp-handle" aria-controls="tp-body" aria-expanded="true"
+              aria-label="Collapse Top parcels"><span aria-hidden="true">&rsaquo;</span></button>
+      <button type="button" class="tp-strip" aria-controls="tp-body" aria-expanded="false"
+              aria-label="Expand Top parcels"><span class="tp-strip-label">Top parcels</span></button>
       <div class="tp-head">
-        <button type="button" class="tp-grip" aria-label="Collapse or expand the table"></button>
         <h2 class="tp-title">Top parcels</h2>
+        <button type="button" class="tp-wide" aria-pressed="false">Wider</button>
         <button type="button" class="tp-close" aria-label="Close Top parcels">&times;</button>
       </div>
-      <div class="tp-body">
+      <div class="tp-body" id="tp-body">
         <div class="tp-pickers">
           <label class="tp-sr" for="tp-kind">Area type</label>
           <select id="tp-kind">
@@ -290,6 +303,7 @@ window.NRPCTopParcels = (() => {
     moreBtn = panel.querySelector(".tp-more");
     countLine = panel.querySelector(".tp-count");
     statusLine = panel.querySelector(".tp-status");
+    stripLabel = panel.querySelector(".tp-strip-label");
 
     kindSel.addEventListener("change", () => {
       const k = kindSel.value;
@@ -307,8 +321,15 @@ window.NRPCTopParcels = (() => {
     moreBtn.addEventListener("click", () => { shown += PAGE; render(); });
     panel.querySelector(".tp-csv").addEventListener("click", csv);
     panel.querySelector(".tp-close").addEventListener("click", () => toggle(false));
-    panel.querySelector(".tp-grip").addEventListener("click", () => panel.classList.toggle("tp-collapsed"));
-    panel.addEventListener("keydown", e => { if (e.key === "Escape") toggle(false); });
+    panel.querySelector(".tp-handle").addEventListener("click", () =>
+      setMode(mode === "collapsed" ? lastOpen : "collapsed", true));
+    panel.querySelector(".tp-strip").addEventListener("click", () => setMode(lastOpen, true));
+    panel.querySelector(".tp-wide").addEventListener("click", () =>
+      setMode(mode === "wide" ? "open" : "wide", true));
+    panel.addEventListener("keydown", e => {
+      if (e.key === "Escape" && mode !== "collapsed") setMode("collapsed", true);
+    });
+    window.addEventListener("resize", () => { if (!panel.classList.contains("hidden")) layout(); });
   }
 
   async function load() {
@@ -321,20 +342,54 @@ window.NRPCTopParcels = (() => {
     return data;
   }
 
-  // The part of the map the open panel covers, as fractions of the view: {right} on desktop,
-  // {bottom} for the phone bottom sheet. A row's Zoom to widens its target on that side so the
-  // parcel lands in the uncovered map. (view.padding would also move the map's buttons.)
-  function covered() {
-    if (!panel || panel.classList.contains("hidden") || panel.classList.contains("tp-collapsed")) return {};
-    const r = panel.getBoundingClientRect(), v = view.container.getBoundingClientRect();
-    if (r.width >= v.width - 1) return { bottom: Math.max(0, (v.bottom - r.top) / v.height) };
-    return { right: Math.max(0, (v.right - r.left) / v.width) };
+  // ── drawer state: open | wide | collapsed, kept for the page (localStorage, may be absent) ──
+  const KEY = "nrpc.topParcels.mode";
+  const isPhone = () => window.innerWidth <= 760;
+  function readMode() {
+    try { const m = localStorage.getItem(KEY); return ["open", "wide", "collapsed"].includes(m) ? m : "open"; }
+    catch (e) { return "open"; }
   }
-  function uncoveredExtent(e) {
-    const c = covered(), out = e.clone();
-    if (c.right && c.right < 0.8) out.xmax = e.xmin + e.width / (1 - c.right);
-    if (c.bottom && c.bottom < 0.8) out.ymin = e.ymax - e.height / (1 - c.bottom);
-    return out;
+  let mode = "open", lastOpen = "open", basePadding = null;
+
+  function setMode(m, focus) {
+    if (m === "wide" && isPhone()) m = "open";       // the phone drawer is already near full width
+    mode = m;
+    if (m !== "collapsed") lastOpen = m;
+    try { localStorage.setItem(KEY, m); } catch (e) { /* private window: state lasts the session */ }
+    layout();
+    if (focus) panel.querySelector(m === "collapsed" ? ".tp-strip" : ".tp-handle").focus();
+  }
+
+  // Classes + aria + the view padding that keeps goTo targets and the popup beside the drawer.
+  // view.padding also moves the map's own corner buttons left of the drawer.
+  function layout() {
+    const shown = !panel.classList.contains("hidden");
+    panel.classList.toggle("tp-collapsed", mode === "collapsed");
+    panel.classList.toggle("tp-wideon", mode === "wide");
+    const h = panel.querySelector(".tp-handle"), w = panel.querySelector(".tp-wide");
+    h.setAttribute("aria-expanded", mode === "collapsed" ? "false" : "true");
+    h.setAttribute("aria-label", mode === "collapsed" ? "Expand Top parcels" : "Collapse Top parcels");
+    h.firstElementChild.innerHTML = mode === "collapsed" ? "&lsaquo;" : "&rsaquo;";
+    panel.querySelector(".tp-strip").setAttribute("aria-expanded", mode === "collapsed" ? "false" : "true");
+    w.setAttribute("aria-pressed", mode === "wide" ? "true" : "false");
+    w.textContent = mode === "wide" ? "Narrower" : "Wider";
+    if (basePadding === null) basePadding = { ...view.padding };
+    let right = 0;
+    if (shown) {
+      const strip = panel.querySelector(".tp-strip");
+      if (mode === "collapsed" || isPhone()) right = strip.offsetWidth || 40;
+      else if (mode === "wide") right = openWidth();     // wide reads over the map; no jump on return
+      else right = panel.getBoundingClientRect().width;
+    }
+    view.padding = { ...basePadding, right: (basePadding.right || 0) + Math.round(right) };
+  }
+  function openWidth() {
+    const css = getComputedStyle(panel).getPropertyValue("--tp-open-w").trim();
+    const probe = document.createElement("div");
+    probe.style.width = css || "480px"; probe.style.position = "absolute"; probe.style.visibility = "hidden";
+    document.body.appendChild(probe);
+    const px = probe.getBoundingClientRect().width; probe.remove();
+    return px;
   }
 
   async function toggle(open) {
@@ -342,11 +397,16 @@ window.NRPCTopParcels = (() => {
     panel.classList.toggle("hidden", !show);
     btn.classList.toggle("active", show);
     btn.setAttribute("aria-expanded", show ? "true" : "false");
-    if (!show) return;
+    if (!show) { layout(); btn.focus(); return; }
+    mode = readMode();
+    if (mode !== "collapsed") lastOpen = mode;
+    if (mode === "wide" && isPhone()) mode = "open";
+    layout();
     await load();
     turnModelOn();
     setScope(scopeFromZoomTo());
-    kindSel.focus();
+    layout();
+    if (mode !== "collapsed") kindSel.focus();
   }
 
   function init(v, m, afterBtn) {
@@ -372,7 +432,8 @@ window.NRPCTopParcels = (() => {
       setScope({ kind: "county" });
     });
     view.watch(["popup.visible", "popup.selectedFeature"], onPopupChange);
-    const api = { toggle, setScope, selectParcel, get rows() { return rows; },
+    const api = { toggle, setScope, selectParcel, setMode, get mode() { return mode; },
+                  get rows() { return rows; },
                   get selectedPid() { return selectedPid; }, get scope() { return scope; } };
     if (window.__nrpc) window.__nrpc.top = api;     // ?debug only
     return api;
