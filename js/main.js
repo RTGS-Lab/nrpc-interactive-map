@@ -320,7 +320,7 @@ require([
     const sidePanel = window.NRPCSidePanel ? window.NRPCSidePanel.init(view) : null;
     if (window.__nrpc) window.__nrpc.side = sidePanel;
     const parcelCard = sidePanel && window.NRPCParcelCard
-      ? window.NRPCParcelCard.init(view, modelV1.model, sidePanel) : null;
+      ? window.NRPCParcelCard.init(view, modelV1.model, sidePanel, { GraphicsLayer, Graphic }) : null;
     if (parcelCard && window.NRPCTopParcels)
       window.NRPCTopParcels.init(view, modelV1.model, layersToggle, sidePanel, parcelCard);
 

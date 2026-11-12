@@ -35,7 +35,7 @@ window.NRPCParcelCard = (() => {
   const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
   let view, model, side, sec, el, run = null, runLoading = null;
   const shards = new Map();
-  let current = null, highlight = null, seq = 0;
+  let current = null, marked = null, highlight = null, seq = 0, pulseLayer = null, lastPulse = 0;
   const listeners = [];
 
   function turnModelOn() {
@@ -92,33 +92,74 @@ window.NRPCParcelCard = (() => {
   }
 
   // ── select ───────────────────────────────────────────────────────────────────────────────
-  async function select(pid, opts = {}) {
-    const my = ++seq;
-    turnModelOn();
+  async function queryParcel(pid) {
     const q = model.layer.createQuery();
     q.where = `PID = '${pid.replace(/'/g, "''")}'`;
     q.outFields = ["*"];
     q.returnGeometry = true;
     q.outSpatialReference = view.spatialReference;
-    const [res, r] = await Promise.all([model.layer.queryFeatures(q), loadRun()]);
+    return (await model.layer.queryFeatures(q)).features[0] || null;
+  }
+
+  // Mark a parcel (Bryan, 2026-11-12, round 6: a table row click "highlight[s] its location"):
+  // the one highlight plus a short cyan pulse; no card, no collapse, no map movement. If the card
+  // is already open it follows the mark in place (no focus move), so the map and the card never
+  // show two different parcels. Returns {feature, offscreen}.
+  async function mark(pid) {
+    const my = ++seq;
+    turnModelOn();
+    const f = await queryParcel(pid);
+    if (my !== seq) return null;
+    marked = { pid, feature: f };
+    setHighlight(f);
+    if (f) pulse(f);
+    listeners.forEach(fn => fn(pid));
+    if (sec.visible) select(pid, { open: false, focus: false, mine: my });
+    return { feature: f, offscreen: f ? isOffscreen(f) : false };
+  }
+
+  function isOffscreen(f) {
+    return !(view.extent && f && f.geometry && view.extent.intersects(f.geometry.extent));
+  }
+
+  // A cyan outline that narrows and fades over about 1.4 s, drawn above everything.
+  function pulse(f) {
+    if (!pulseLayer) return;
+    pulseLayer.removeAll();
+    const g = new pulseLayer.GraphicCtor({ geometry: f.geometry,
+      symbol: { type: "simple-fill", color: [0, 194, 255, 0.18], outline: { color: [0, 194, 255, 1], width: 7 } } });
+    pulseLayer.add(g);
+    const t0 = performance.now(), D = 1400;
+    lastPulse = Date.now();
+    const step = t => {
+      const k = Math.min(1, (t - t0) / D);
+      if (!pulseLayer.graphics.includes(g)) return;
+      g.symbol = { type: "simple-fill", color: [0, 194, 255, 0.18 * (1 - k)],
+                   outline: { color: [0, 194, 255, 1 - 0.85 * k], width: 7 - 5 * k } };
+      if (k < 1) requestAnimationFrame(step); else pulseLayer.remove(g);
+    };
+    requestAnimationFrame(step);
+  }
+
+  // Open (or update) the card. opts.open false: update an open card in place; opts.focus false:
+  // keep the focus where it is. Never collapses the Top parcels list (round 6).
+  async function select(pid, opts = {}) {
+    const my = opts.mine || ++seq;
+    turnModelOn();
+    const [f, r] = await Promise.all([marked && marked.pid === pid && marked.feature ? marked.feature : queryParcel(pid), loadRun()]);
     if (my !== seq) return null;                       // a newer selection won
-    const f = res.features[0] || null;
     current = { pid, feature: f };
-    sec.show(true);
-    sec.expand(true);
-    if (opts.from === "map") {                         // map click: table to its header
-      const top = side.get("top");
-      if (top && top.visible) top.expand(false);
-    }
+    marked = { pid, feature: f };
+    if (opts.open !== false) { sec.show(true); if (!sec.expanded) sec.expand(true); }
     setHighlight(f);
     renderCard(pid, f, r, undefined, "");          // inputs loading
     listeners.forEach(fn => fn(pid));
-    focusHeading();
+    if (opts.focus !== false) focusHeading();
     const [inputs, addr] = await Promise.all([f ? loadShard(pid).catch(() => null) : null, address(pid)]);
     if (my !== seq) return f;
-    const hadFocus = el.contains(document.activeElement) || document.activeElement === document.body;
+    const hadFocus = el.contains(document.activeElement);
     renderCard(pid, f, r, inputs, addr);
-    if (hadFocus) focusHeading();                      // the re-render replaced the heading
+    if (hadFocus && opts.focus !== false) focusHeading();   // the re-render replaced the content
     return f;
   }
 
@@ -127,7 +168,7 @@ window.NRPCParcelCard = (() => {
 
   // Zoom to the selected parcel with the Zoom to tool's own zoom; a lot is framed in >= 500 m.
   async function zoomTo() {
-    const f = current && current.feature;
+    const f = (current && current.feature) || (marked && marked.feature);
     if (!f) return;
     if (side.mode === "wide") side.setMode("open");
     let e = f.geometry.extent.clone();
@@ -141,13 +182,14 @@ window.NRPCParcelCard = (() => {
     if (highlight) { highlight.remove(); highlight = null; }
     if (!f) return;
     const lv = await view.whenLayerView(model.layer);
-    if (current && current.feature === f) highlight = lv.highlight(f);
+    if (marked && marked.feature === f) { if (highlight) highlight.remove(); highlight = lv.highlight(f); }
   }
 
   function clear() {
     seq++;
     if (highlight) { highlight.remove(); highlight = null; }
-    current = null;
+    current = null; marked = null;
+    if (pulseLayer) pulseLayer.removeAll();
     if (sec.visible) sec.show(false);
     listeners.forEach(fn => fn(null));
   }
@@ -273,8 +315,14 @@ window.NRPCParcelCard = (() => {
     el.querySelector(".pc-zoom")?.addEventListener("click", () => zoomTo());
   }
 
-  function init(v, m, s) {
+  function init(v, m, s, deps = {}) {
     view = v; model = m; side = s;
+    if (deps.GraphicsLayer && deps.Graphic) {
+      pulseLayer = new deps.GraphicsLayer({ title: "Parcel pulse", listMode: "hide" });
+      pulseLayer.nrpcHelper = true;
+      pulseLayer.GraphicCtor = deps.Graphic;
+      view.map.add(pulseLayer);
+    }
     if (!model || !model.layer || !P || !D || !side) return null;
     sec = side.section("parcel", "Parcel", 2);
     el = document.createElement("div");
@@ -289,7 +337,9 @@ window.NRPCParcelCard = (() => {
       const g = hit.results.find(x => x.graphic && x.graphic.layer === model.layer);
       if (g && g.graphic.attributes && g.graphic.attributes.PID) select(g.graphic.attributes.PID, { from: "map" });
     });
-    const api = { select, clear, zoomTo, turnModelOn, onChange: fn => listeners.push(fn),
+    const api = { select, mark, clear, zoomTo, turnModelOn, isOffscreen, onChange: fn => listeners.push(fn),
+                  get markedPid() { return marked && marked.pid; }, get lastPulse() { return lastPulse; },
+                  get markedFeature() { return marked && marked.feature; },
                   get pid() { return current && current.pid; },
                   get feature() { return current && current.feature; },
                   get numbers() { return current && current.numbers; }, section: sec };

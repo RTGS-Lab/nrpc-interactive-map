@@ -830,3 +830,28 @@ body,
   #sp-top .tp-hide-phone { display: none; }
   .pc-card .pc-zoom { height: 44px; }
 }
+
+/* ── Round 6: highlight-then-act (js/top-parcels.js), stacked split (js/side-panel.js) ── */
+#sp-top .tp-actionbar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+#sp-top .tp-zoomsel {
+  height: 32px; padding: 0 12px; border: 1px solid #13706F; border-radius: 3px; background: #13706F;
+  color: white; font-family: inherit; font-size: 13px; cursor: pointer; max-width: 100%;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+#sp-top .tp-zoomsel:hover:not(:disabled) { background: #0B3D5C; }
+#sp-top .tp-zoomsel:disabled { background: #f0f0f0; color: #666; border-color: #ccc; cursor: default; }
+#sp-top .tp-zoomsel:focus-visible { outline: 2px solid #1D5A8E; outline-offset: 2px; }
+#sp-top .tp-offscreen { font-size: 12px; color: #8a4b00; font-weight: 600; }
+#sp-top tbody tr.tp-selected { background: #cdeefb; box-shadow: inset 4px 0 0 #0079c1; }
+#sp-top tbody tr.tp-selected td { font-weight: 600; }
+/* both sections open: the list keeps 6 rows; the card takes the rest and scrolls */
+#side-panel.sp-both #sp-top .sp-sec-body { flex: none; }
+#side-panel.sp-both #sp-top .tp-wrap { flex: none; height: 214px; min-height: 0; }
+#side-panel.sp-both #sp-top .tp-status { display: none; }
+#side-panel.sp-both #sp-parcel { min-height: 0; }
+#side-panel.sp-both #sp-parcel .sp-sec-body { overflow: auto; }
+@media (max-width: 760px) {
+  #sp-top .tp-zoomsel { height: 44px; }
+  #side-panel.sp-both #sp-top .tp-wrap { height: 250px; max-height: none; }
+  #side-panel.sp-both #sp-top .sp-sec-body { overflow: visible; }
+}

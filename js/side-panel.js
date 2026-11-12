@@ -12,9 +12,11 @@
 //   naming what is inside). Edge handle and strip toggle it; Escape collapses it. Kept in
 //   localStorage (try/catch: a private window keeps it for the page only).
 // - Sections: shown or hidden (the toolbar button / a close button), expanded or collapsed to
-//   their header (a button with aria-expanded). One section is expanded at a time (an
-//   accordion): opening the card collapses the table to its header and the other way round, so
-//   neither gets half a panel (UI review 2026-11-12, finding 4).
+//   their header (a button with aria-expanded). Only the user collapses a section (round 6,
+//   Bryan: "I'd still want the list to be visible unless I fully collapse it"; replaces the
+//   round-5 accordion). Both expanded = a stacked split ("sp-both"): the list keeps 6 rows, the
+//   card fills the rest and scrolls. Stacked in Wider too: side by side would leave each under
+//   300 px at 1280-1440 px. The phone uses the same stack (list one scroll up, never closed).
 // - "Wider" sits in the Top parcels header (no band of its own, finding 15) and stops at the
 //   toolbar's right edge, so the toolbar stays reachable (finding 14); hidden when it would not
 //   be wider. Escape closes the innermost open thing: an open <details>, then the section the
@@ -86,7 +88,9 @@ window.NRPCSidePanel = (() => {
     const vis = sections.filter(s => s.visible).sort((a, b) => a.order - b.order);
     stripLabel.textContent = vis.map(s => s.stripText()).join("  |  ") || "Panel";
     vis.forEach((s, i) => { s.el.classList.toggle("sp-first", i === 0); });
-    vis.forEach(s => { s.el.style.flex = s.expanded ? "1 1 auto" : "0 0 auto"; });
+    const both = vis.filter(s => s.expanded).length > 1;
+    el.classList.toggle("sp-both", both);
+    vis.forEach(s => { s.el.style.flex = !s.expanded ? "0 0 auto" : both && s.id === "top" ? "0 0 auto" : "1 1 auto"; });
     if (basePadding === null) basePadding = { ...view.padding };
     let right = 0;
     if (on) {
@@ -124,7 +128,6 @@ window.NRPCSidePanel = (() => {
       stripText() { return this.summary ? `${title} · ${this.summary}` : title; },
       setSummary(t) { this.summary = t || ""; sec.querySelector(".sp-sec-sum").textContent = this.summary; layout(); },
       expand(v = true) {
-        if (v) sections.forEach(o => { if (o !== this && o.visible && o.expanded) o.expand(false); });
         // a collapsed section keeps its place: scroll offsets of [data-keep-scroll] elements
         const keep = [...this.body.querySelectorAll("[data-keep-scroll]")];
         if (!v && this.expanded) this.scrolls = keep.map(k => k.scrollTop);
@@ -138,7 +141,6 @@ window.NRPCSidePanel = (() => {
       show(v = true) {
         if (this.visible === v) { if (v && mode === "collapsed") setMode(lastOpen); return; }
         this.visible = v;
-        if (v && this.expanded) sections.forEach(o => { if (o !== this && o.visible && o.expanded) o.expand(false); });
         sec.classList.toggle("hidden", !v);
         if (v && mode === "collapsed") mode = lastOpen;
         layout();

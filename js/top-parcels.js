@@ -17,8 +17,13 @@
 // - Table -> Zoom to: picking an area in the table ticks it in Zoom to (its outline, Clip & Zip
 //   extent and, on branch city-mask, its grey mask) and frames it with the Zoom button's own code.
 //   Picking Hennepin County clears the Zoom to selection and does not move the map.
-// - A row selects the parcel through the card (the same selection a map click makes; one
-//   highlight); the table stays where it is. A row's Zoom to uses window.NRPCZoomTo.zoomToExtent,
+// - Round 6 (Bryan, 2026-11-12): a row click / Enter / Space only highlights its parcel (the one
+//   map highlight + a short pulse; no card, no collapse, no map movement); arrows move the
+//   highlight. One panel-level button, "Zoom to selected", acts on the highlighted row: it zooms
+//   with the Zoom to tool's code and opens the Parcel card, and the list stays visible. It is
+//   disabled ("Select a row first") until a row is highlighted, names its target, and says
+//   "off screen" when the parcel is outside the view. Shortcut: Z or Ctrl+Enter in the list.
+//   Only the user collapses the list. A row's Zoom to uses window.NRPCZoomTo.zoomToExtent,
 //   the Zoom to tool's own zoom; the container's view padding keeps the parcel beside it.
 // - The selected row follows the card (a map click on a listed parcel marks its row; closing the
 //   card clears it); a scope change that drops the selected parcel closes the card.
@@ -30,7 +35,7 @@ window.NRPCTopParcels = (() => {
   let view, model, side, sec, card, data = null, loading = null;
   let scope = { kind: "county" };    // {kind: county} | {kind: city|watershed|mixed, items: [..]}
   let shown = PAGE, rows = [], selectedPid = null, driving = false;
-  let btn, kindSel, areaSel, scopeNote, thead, tbody, moreBtn, countLine, statusLine;
+  let btn, kindSel, areaSel, scopeNote, thead, tbody, moreBtn, countLine, statusLine, zoomBtn, offHint;
 
   // ── Zoom to tool (its own DOM: #city-checkbox-scroll, #city-zoom-btn, #city-clear-btn) ──────
   const zt = {
@@ -150,6 +155,18 @@ window.NRPCTopParcels = (() => {
         ? ` (each area lists its top ${fmt(data.top_n)})` : "");
     moreBtn.hidden = n >= rows.length;
     markSelected();
+    fitRows();
+  }
+
+  // With the card open below, the list is sized to show its first 6 rows (rows that wrap are
+  // taller, so measured rather than fixed). Without the card the list takes the panel.
+  function fitRows(n = 6) {
+    const wrap = sec && sec.body.querySelector(".tp-wrap");
+    if (!wrap) return;
+    if (!side.el.classList.contains("sp-both")) { wrap.style.height = ""; return; }
+    const trs = [...tbody.querySelectorAll("tr")].slice(0, n);
+    const h = thead.getBoundingClientRect().height + trs.reduce((t, r) => t + r.getBoundingClientRect().height, 0);
+    if (h > 0) wrap.style.height = `${Math.ceil(h + 2)}px`;
   }
 
   function rowEl(r, pos, cols) {
@@ -175,11 +192,17 @@ window.NRPCTopParcels = (() => {
                       col.hide ? "tp-hide-" + col.hide : ""].filter(Boolean).join(" ");
       tr.appendChild(td);
     });
-    tr.addEventListener("click", () => selectParcel(pid, false));
+    tr.addEventListener("click", () => highlightRow(pid));
     tr.addEventListener("keydown", e => {
-      if (e.key === "Enter" || e.key === " ") { e.preventDefault(); selectParcel(pid, false); }
-      if (e.key === "ArrowDown") { e.preventDefault(); nextRow(tr, 1)?.focus(); }
-      if (e.key === "ArrowUp") { e.preventDefault(); nextRow(tr, -1)?.focus(); }
+      if ((e.key === "Enter" && (e.ctrlKey || e.metaKey)) || e.key === "z" || e.key === "Z") {
+        e.preventDefault(); if (selectedPid !== pid) highlightRow(pid); zoomSelected(); return;
+      }
+      if (e.key === "Enter" || e.key === " ") { e.preventDefault(); highlightRow(pid); }
+      if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+        e.preventDefault();
+        const n = nextRow(tr, e.key === "ArrowDown" ? 1 : -1);
+        if (n) { n.focus(); highlightRow(n.dataset.pid); }
+      }
     });
     return tr;
   }
@@ -189,34 +212,45 @@ window.NRPCTopParcels = (() => {
     return n;
   }
 
-  // "Zoom to" only on the selected row (finding 5): a row under it with one button.
   function markSelected() {
     if (!tbody) return;
-    tbody.querySelectorAll("tr.tp-actions").forEach(x => x.remove());
     tbody.querySelectorAll("tr").forEach(tr => {
       const on = tr.dataset.pid === selectedPid;
       tr.classList.toggle("tp-selected", on);
       tr.setAttribute("aria-selected", on ? "true" : "false");
-      if (on) {
-        const a = document.createElement("tr");
-        a.className = "tp-actions";
-        const td = document.createElement("td");
-        td.colSpan = tr.children.length;
-        const z = document.createElement("button");
-        z.type = "button"; z.className = "tp-zoom"; z.textContent = `Zoom to parcel ${selectedPid}`;
-        z.addEventListener("click", e => { e.stopPropagation(); selectParcel(selectedPid, true); });
-        td.appendChild(z); a.appendChild(td); tr.after(a);
-      }
     });
+    updateZoomButton();
+  }
+
+  // The one "Zoom to selected" button: disabled until a row is highlighted; names its target.
+  let offscreen = false;
+  function updateZoomButton() {
+    if (!zoomBtn) return;
+    const r = selectedPid && data ? data.rows.find(x => x[0] === selectedPid) : null;
+    const name = r && r[7] ? r[7] : selectedPid;
+    zoomBtn.disabled = !selectedPid;
+    zoomBtn.textContent = selectedPid ? `Zoom to ${name}` : "Zoom to selected";
+    zoomBtn.title = selectedPid ? `Zoom to parcel ${selectedPid} and open its card (Z or Ctrl+Enter in the list)`
+                                : "Select a row first";
+    offHint.hidden = !(selectedPid && offscreen);
   }
 
   // ── select / zoom: the card does the selection; the Zoom to tool's zoom does the framing ──
-  async function selectParcel(pid, zoom) {
-    if (zoom && side.mode === "wide") side.setMode("open");      // wide reads; zoom beside it
-    const f = await card.select(pid, { from: "table" });
-    if (!f || !zoom) return;
-    await card.zoomTo();
+  async function highlightRow(pid) {
+    selectedPid = pid; markSelected();
+    const res = await card.mark(pid);
+    if (res && card.markedPid === pid) { offscreen = res.offscreen; updateZoomButton(); }
   }
+
+  async function zoomSelected() {
+    if (!selectedPid) return;
+    const pid = selectedPid;
+    const f = await card.select(pid, { focus: false });       // opens the card; list stays
+    if (!f) return;
+    await card.zoomTo();
+    offscreen = false; updateZoomButton();
+  }
+  const selectParcel = (pid, zoom) => zoom ? highlightRow(pid).then(zoomSelected) : highlightRow(pid);
 
   // A scope change closes the card only when its parcel lies outside the new area (centroid
   // tested against the Zoom to tool's own layers); a parcel that is in the area but below its
@@ -283,6 +317,10 @@ window.NRPCTopParcels = (() => {
         <select id="tp-area" hidden></select>
       </div>
       <div class="tp-scope" aria-live="polite"></div>
+      <div class="tp-actionbar">
+        <button type="button" class="tp-zoomsel" disabled title="Select a row first">Zoom to selected</button>
+        <span class="tp-offscreen" hidden>off screen</span>
+      </div>
       <div class="tp-wrap" data-keep-scroll>
         <table>
           <thead></thead>
@@ -300,6 +338,9 @@ window.NRPCTopParcels = (() => {
     scopeNote = el.querySelector(".tp-scope");
     tbody = el.querySelector("tbody");
     thead = el.querySelector("thead");
+    zoomBtn = el.querySelector(".tp-zoomsel");
+    offHint = el.querySelector(".tp-offscreen");
+    zoomBtn.addEventListener("click", () => zoomSelected());
     moreBtn = el.querySelector(".tp-more");
     countLine = el.querySelector(".tp-count");
     statusLine = el.querySelector(".tp-status");
@@ -373,8 +414,17 @@ window.NRPCTopParcels = (() => {
       setScope({ kind: "county" });
     });
     // the selected row follows the card
-    card.onChange(pid => { selectedPid = pid; markSelected(); });
+    card.onChange(pid => { if (pid !== selectedPid) { selectedPid = pid; offscreen = false; } markSelected(); });
+    new MutationObserver(() => requestAnimationFrame(() => fitRows()))
+      .observe(side.el, { attributes: true, attributeFilter: ["class"] });
+    window.addEventListener("resize", () => fitRows());
+    view.watch("stationary", st => {
+      if (!st || !selectedPid || card.markedPid !== selectedPid) return;
+      const f = card.markedFeature;
+      if (f) { offscreen = card.isOffscreen(f); updateZoomButton(); }
+    });
     const api = { show: v2 => sec.show(v2 ?? !sec.visible), section: sec, setScope, selectParcel,
+                  highlightRow, zoomSelected, get offscreen() { return offscreen; },
                   get rows() { return rows; }, get selectedPid() { return selectedPid; },
                   get scope() { return scope; } };
     if (window.__nrpc) window.__nrpc.top = api;     // ?debug only
