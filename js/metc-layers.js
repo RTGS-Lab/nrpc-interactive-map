@@ -39,43 +39,69 @@ window.NRPCMetc = (() => {
       (geometryEngine, Polygon) => { mods = { geometryEngine, Polygon }; resolve(mods); }, reject));
   }
 
-  async function query(parcelGeom) {
+  // Layer info (edit date) once per layer, not once per parcel: six fewer requests per click.
+  const infoCache = new Map();
+  function info(url) {
+    if (!infoCache.has(url)) infoCache.set(url, fetch(url + "?f=json").then(r => r.json()).catch(() => ({})));
+    return infoCache.get(url);
+  }
+
+  // Two stages. Measured 2026-11-12 (task dir 2026-W46 THU 05): with the geometry, a query that hits
+  // one of these region-wide polygons returns 2.4-3.4 MB of JSON, about 9 MB per parcel over the
+  // six layers, before the overlap is cut on the main thread. Stage 1 asks without geometry
+  // (about 1 kB per layer): which layers, which values -> the checklist. Stage 2 asks for geometry
+  // only from the layers that overlap, generalized to 1/200 of the parcel's extent (never finer
+  // than 0.5 m), which shifts the share by well under 1% and cuts the bytes 3-6x -> the share.
+  async function query(parcelGeom, onStage) {
     const m = await modules();
     const g = parcelGeom.toJSON ? parcelGeom.toJSON() : parcelGeom;
     const wkid = (g.spatialReference && (g.spatialReference.latestWkid || g.spatialReference.wkid)) || 3857;
     const area = Math.abs(m.geometryEngine.planarArea(parcelGeom, "square-meters")) || 0;
-    const body = l => new URLSearchParams({ where: l.where || "1=1", geometry: JSON.stringify(g),
+    const base = l => ({ where: l.where || "1=1", geometry: JSON.stringify(g),
       geometryType: "esriGeometryPolygon", inSR: String(wkid), spatialRel: "esriSpatialRelIntersects",
-      outFields: `${l.field},CTU_NAME`, returnGeometry: "true", outSR: String(wkid), f: "json" });
-    return Promise.all(LAYERS.map(async l => {
+      outFields: `${l.field},CTU_NAME`, outSR: String(wkid), f: "json" });
+    const post = (l, extra) => fetch(l.url + "/query", { method: "POST", body: new URLSearchParams({ ...base(l), ...extra }) }).then(r => r.json());
+    const rows = await Promise.all(LAYERS.map(async l => {
       try {
-        const [q, info] = await Promise.all([
-          fetch(l.url + "/query", { method: "POST", body: body(l) }).then(r => r.json()),
-          fetch(l.url + "?f=json").then(r => r.json()).catch(() => ({})),
-        ]);
+        const [q, inf] = await Promise.all([post(l, { returnGeometry: "false" }), info(l.url)]);
         if (q.error) throw new Error(q.error.message);
         const feats = q.features || [];
+        const values = [...new Set(feats.map(ft => clean(ft.attributes[l.field])).filter(Boolean))];
+        const edited = inf.editingInfo && inf.editingInfo.dataLastEditDate
+          ? new Date(inf.editingInfo.dataLastEditDate).toISOString().slice(0, 10) : null;
+        return { label: l.label, count: feats.length, values, share: null, sharePending: feats.length > 0 && area > 0, edited, error: null };
+      } catch (e) {
+        return { label: l.label, count: 0, values: [], share: null, sharePending: false, edited: null, error: e.message };
+      }
+    }));
+    if (onStage) { try { onStage(rows); } catch (e) { /* a display error must not stop the share */ } }
+    const ext = parcelGeom.extent;
+    const offset = Math.max(0.5, Math.max(ext ? ext.width : 0, ext ? ext.height : 0) / 200);
+    await Promise.all(rows.map(async (row, i) => {
+      if (!row.sharePending) return;
+      try {
+        const q = await post(LAYERS[i], { returnGeometry: "true", maxAllowableOffset: String(offset), geometryPrecision: "1" });
+        if (q.error) throw new Error(q.error.message);
         let overlap = 0;
-        feats.forEach(ft => {
+        (q.features || []).forEach(ft => {
           try {
             const poly = new m.Polygon({ ...ft.geometry, spatialReference: g.spatialReference });
             const x = m.geometryEngine.intersect(poly, parcelGeom);
             if (x) overlap += Math.abs(m.geometryEngine.planarArea(x, "square-meters"));
           } catch (e) { /* a geometry that will not intersect cleanly adds nothing */ }
         });
-        const values = [...new Set(feats.map(ft => clean(ft.attributes[l.field])).filter(Boolean))];
-        const edited = info.editingInfo && info.editingInfo.dataLastEditDate
-          ? new Date(info.editingInfo.dataLastEditDate).toISOString().slice(0, 10) : null;
-        return { label: l.label, count: feats.length, values, share: area ? Math.min(1, overlap / area) : null, edited, error: null };
-      } catch (e) {
-        return { label: l.label, count: 0, values: [], share: null, edited: null, error: e.message };
-      }
+        row.share = Math.min(1, overlap / area);
+      } catch (e) { row.share = null; }
+      row.sharePending = false;
     }));
+    return rows;
   }
 
-  function summary(pid, parcelGeom) {
+  // onStage (optional) is called once the checklist is known, before the shares are measured.
+  function summary(pid, parcelGeom, onStage) {
     if (!cache.has(pid)) {
-      const p = query(parcelGeom).then(rows => { done.set(pid, rows); return rows; });
+      const p = query(parcelGeom, rows => { done.set(pid, rows); if (onStage) onStage(rows); })
+        .then(rows => { done.set(pid, rows); return rows; });
       p.catch(() => cache.delete(pid));
       cache.set(pid, p);
     }
@@ -86,7 +112,8 @@ window.NRPCMetc = (() => {
   function valueText(r) {
     if (r.error) return "could not check";
     if (!r.count) return "none at this parcel";
-    const share = r.share == null ? "" : `; ${r.share >= 0.995 ? "100" : (100 * r.share).toFixed(r.share < 0.01 ? 1 : 0)}% of the parcel area`;
+    const share = r.sharePending ? "; share of the parcel area: measuring..."
+      : r.share == null ? "" : `; ${r.share >= 0.995 ? "100" : (100 * r.share).toFixed(r.share < 0.01 ? 1 : 0)}% of the parcel area`;
     return `${r.values.join("; ") || "included"}${share}`;
   }
   const sourceText = r => `Source: Metropolitan Council, the map's hosted copy${r.edited ? `, data last edited ${r.edited}` : ""}.`;

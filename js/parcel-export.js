@@ -399,6 +399,7 @@ window.NRPCParcelExport = (() => {
   let card, printRoot, pdfBtn, docBtn, lastDoc = null;
 
   async function prepare(btn) {
+    if (card.ready) await card.ready;            // the inputs and address land after the card opens
     const P = card.print;
     if (!P || !card.feature) throw new Error("Select a parcel first.");
     const label = btn.textContent;

@@ -98,7 +98,8 @@ window.NRPCSidePanel = (() => {
       else if (mode === "wide") right = openWidth();      // wide reads over the map
       else right = el.getBoundingClientRect().width;
     }
-    view.padding = { ...basePadding, right: (basePadding.right || 0) + Math.round(right) };
+    const want = (basePadding.right || 0) + Math.round(right);
+    if (!view.padding || view.padding.right !== want) view.padding = { ...basePadding, right: want };
   }
 
   // A section: header button (title + one-line summary + chevron) and a body.
