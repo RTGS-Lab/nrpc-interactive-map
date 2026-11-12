@@ -569,6 +569,23 @@ body,
   font-weight: 600;
 }
 
+/* already protected: grey fill + #808080 diagonal hatch, as drawn on the map (js/protected-v1.js) */
+#model-legend .ml-protected {
+  margin-top: 6px;
+}
+
+#model-legend .ml-protected .ml-swatch {
+  width: 30px;
+  height: 16px;
+  flex: none;
+  border: 1px solid #808080;
+  background: repeating-linear-gradient(-45deg, #808080 0 1px, #D9D9D9 1px 5px);
+}
+
+#model-legend .ml-protected .ml-label {
+  color: #555;
+}
+
 /* the Esri legend says "No legend" when only the model and water are on; the block above covers it */
 #legend-container .esri-legend__message { display: none; }
 

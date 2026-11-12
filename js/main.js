@@ -13,8 +13,9 @@ require([
   "esri/layers/GroupLayer",
   "esri/geometry/Polyline",
   "esri/widgets/ScaleBar",
+  "esri/layers/GeoJSONLayer",
 ], (WebMap, MapView, Home, LayerList, Legend, Editor, GraphicsLayer, Graphic, Basemap, geometryEngine,
-    FeatureLayer, GroupLayer, Polyline, ScaleBar) => {
+    FeatureLayer, GroupLayer, Polyline, ScaleBar, GeoJSONLayer) => {
 
   const webmap = new WebMap({
     portalItem: {
@@ -82,7 +83,10 @@ require([
     const modelV1 = window.NRPCModelV1
       ? window.NRPCModelV1.apply(view, { FeatureLayer, GroupLayer, geometryEngine, Polyline })
       : { model: null, water: null };
-    if (new URLSearchParams(location.search).has("debug")) window.__nrpc = { view, modelV1 };
+    // Already-protected parcels greyed and left out of the ranking (js/protected-v1.js)
+    const protectedV1 = window.NRPCProtected
+      ? window.NRPCProtected.apply(view, { GeoJSONLayer }, modelV1.model) : null;
+    if (new URLSearchParams(location.search).has("debug")) window.__nrpc = { view, modelV1, protectedV1 };
     view.ui.add(new ScaleBar({ view, unit: "imperial" }), "bottom-left");
 
     const openTabBtn = document.createElement("div");
@@ -321,6 +325,7 @@ require([
     new Legend({ view, container: legendContainer });
     if (window.NRPCModelV1) {
       window.NRPCModelV1.buildLegend(legendWrapper, view, modelV1.model, modelV1.water);
+      if (window.NRPCProtected) window.NRPCProtected.decorateLegend(legendWrapper);
       // keep the panel title first, the model block right under it
       legendWrapper.insertBefore(legendTitle, legendWrapper.firstChild);
     }
