@@ -57,6 +57,15 @@ window.NRPCParcelCard = (() => {
     return run;
   }
 
+  // A source's text and its full-layer links (round 7 rule), shared by the card and the export.
+  function sourceParts(s, links) {
+    const clean = t => String(t ?? "").replace(/\[NEEDS CONFIRM\]/g, "(not confirmed)");
+    const full = String(s.url || "").split(/;\s*/).map(p => (p.match(/https?:\/\/\S+/) || [])[0])
+      .filter(Boolean).map(u => links[u]).filter(v => v && v.verdict === "full" && v.link);
+    return { text: `${clean(s.label)} -- ${clean(s.agency)}; ${clean(s.date)}`,
+             links: full.map(v => ({ name: v.name, href: v.link })) };
+  }
+
   // One source line: "label -- agency; date", then links to the full layers it names, if any.
   function sourceLine(s, links) {
     const full = String(s.url || "").split(/;\s*/).map(p => (p.match(/https?:\/\/\S+/) || [])[0])
@@ -287,6 +296,23 @@ window.NRPCParcelCard = (() => {
     }
     why.push(`Largest gap: ${gap.label}, ${gap.earned.toFixed(1)} of ${gap.possible.toFixed(0)} points.`);
 
+    // What the card shows, for the export (js/parcel-export.js): same numbers, same words.
+    if (current && current.pid === pid) current.print = {
+      pid, addr, runLabel: r.label, overall, rank: rank || null, rankedCount: D.parcels_ranked,
+      status: isProt ? "protected" : isMsp ? "msp" : "ranked",
+      rankLine: isProt ? "Already protected: scored, not ranked." : isMsp ? "MSP Airport: not ranked"
+        : `Rank ${fmt(rank)} of ${fmt(D.parcels_ranked)} ranked parcels${topPct(rank)}`,
+      rule: isProt ? r.rank.protected_rule : isMsp ? r.rank.msp_rule : null,
+      cls: rank ? { label: C[cls].label, color: C[cls].color } : null,
+      sumOk, sum,
+      cats: cats.map(c => ({ key: c.key, label: c.label, weight: c.weight, earned: c.earned, possible: c.possible,
+                             p50: c.county.p50, p90: c.county.p90 })),
+      why: why.slice(),
+      inputs: inputs ? r.inputs.map(i => ({ category: i.category, label: i.label, within: i.within,
+        value: (inputs[i.field] || {}).value, points: (inputs[i.field] || {}).points,
+        sources: (i.sources || []).map(sv => sourceParts(sv, r.links || {})) })) : null,
+      published: a.Rank, acres: a.Shape__Area ? a.Shape__Area / 4046.8564224 : null,
+    };
     // the numbers on the card, for the checks (?debug)
     if (current && current.pid === pid) current.numbers = {
       pid, overall, rank: rank || null, protected: isProt, msp: isMsp, sumOk, sum,
@@ -355,6 +381,7 @@ window.NRPCParcelCard = (() => {
                   get markedFeature() { return marked && marked.feature; },
                   get pid() { return current && current.pid; },
                   get feature() { return current && current.feature; },
+                  get print() { return current && current.print; },
                   get numbers() { return current && current.numbers; }, section: sec };
     if (window.__nrpc) window.__nrpc.card = api;
     return api;

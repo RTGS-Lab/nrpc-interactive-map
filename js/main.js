@@ -321,6 +321,8 @@ require([
     if (window.__nrpc) window.__nrpc.side = sidePanel;
     const parcelCard = sidePanel && window.NRPCParcelCard
       ? window.NRPCParcelCard.init(view, modelV1.model, sidePanel, { GraphicsLayer, Graphic }) : null;
+    // Parcel export, PDF and Word (js/parcel-export.js + js/docx-writer.js); drop-out safe
+    if (parcelCard && window.NRPCParcelExport) window.NRPCParcelExport.init(parcelCard);
     if (parcelCard && window.NRPCTopParcels)
       window.NRPCTopParcels.init(view, modelV1.model, layersToggle, sidePanel, parcelCard);
 
