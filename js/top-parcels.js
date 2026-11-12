@@ -117,10 +117,10 @@ window.NRPCTopParcels = (() => {
     rows = rowsFor(scope);
     const D = window.NRPCProtectedV1;
     scopeNote.textContent = `Top parcels in ${scopeLabel(scope)}` +
-      (scope.kind !== "county" && zt.checked().kind !== "county" ? " (from Zoom to)" : "");
-    statusLine.textContent = `Ranked over ${fmt(data.parcels_ranked)} parcels. Already-protected ` +
-      `(${fmt(data.excluded.protected)}) and MSP Airport (${fmt(data.excluded.msp)}) parcels are ` +
-      `not ranked and not listed. Area = the city or district holding the parcel's centroid.`;
+      (scope.kind !== "county" && zt.checked().kind !== "county" ? " (linked to Zoom to)" : "");
+    statusLine.textContent = `Rank = rank among ${fmt(data.parcels_ranked)} ranked parcels. Not ` +
+      `ranked, not listed: already protected (${fmt(data.excluded.protected)}), MSP Airport ` +
+      `(${fmt(data.excluded.msp)}). Area = the city or district holding the parcel's centroid.`;
     tbody.innerHTML = "";
     const n = Math.min(shown, rows.length);
     rows.slice(0, n).forEach((r, i) => tbody.appendChild(rowEl(r, i + 1)));
@@ -143,19 +143,18 @@ window.NRPCTopParcels = (() => {
       `<span class="tp-swatch" style="background:${c.color}"></span>${data.class_labels[cls]}`,
       pid, addr || "", data.cities[city] || "", acres.toFixed(2), ov.toFixed(4),
     ];
-    cells.forEach((v, k) => {
-      const td = document.createElement("td");
-      if (k === 2) td.innerHTML = v; else td.textContent = v;
-      if (k === 0 || k === 1 || k >= 6) td.className = "tp-num";
-      tr.appendChild(td);
-    });
-    const td = document.createElement("td");
     const z = document.createElement("button");
     z.type = "button"; z.className = "tp-zoom"; z.textContent = "Zoom to";
     z.setAttribute("aria-label", `Zoom to parcel ${pid}`);
     z.addEventListener("click", e => { e.stopPropagation(); selectParcel(pid, true); });
-    td.appendChild(z);
-    tr.appendChild(td);
+    cells.forEach((v, k) => {
+      const td = document.createElement("td");
+      if (k === 2) td.innerHTML = v; else td.textContent = v;
+      if (k === 0 || k === 1 || k >= 6) td.className = "tp-num";
+      if (k === 4) td.className = "tp-addr";
+      tr.appendChild(td);
+      if (k === 0) { const zt = document.createElement("td"); zt.appendChild(z); tr.appendChild(zt); }
+    });
     tr.addEventListener("click", () => selectParcel(pid, false));
     tr.addEventListener("keydown", e => {
       if (e.key === "Enter" || e.key === " ") { e.preventDefault(); selectParcel(pid, false); }
@@ -195,7 +194,7 @@ window.NRPCTopParcels = (() => {
       let e = f.geometry.extent.clone();
       const grow = MIN_PARCEL_EXTENT_M / Math.max(e.width, e.height, 1);
       if (grow > 1) e = e.expand(grow);
-      await window.NRPCZoomTo.zoomToExtent(e, window.NRPCZoomTo.AREA_FACTOR);
+      await window.NRPCZoomTo.zoomToExtent(uncoveredExtent(e), window.NRPCZoomTo.AREA_FACTOR);
     }
     const at = f.geometry.centroid || f.geometry.extent.center;
     view.openPopup({ features: [f], location: at });
@@ -267,10 +266,11 @@ window.NRPCTopParcels = (() => {
         <div class="tp-wrap">
           <table>
             <thead><tr>
-              <th scope="col" class="tp-num">#</th><th scope="col" class="tp-num">Rank</th>
+              <th scope="col" class="tp-num">#</th><th scope="col"><span class="tp-sr">Zoom</span></th>
+              <th scope="col" class="tp-num">Rank</th>
               <th scope="col">Class</th><th scope="col">PID</th><th scope="col">Address</th>
               <th scope="col">City</th><th scope="col" class="tp-num">Acres</th>
-              <th scope="col" class="tp-num">Overall Value</th><th scope="col"><span class="tp-sr">Zoom</span></th>
+              <th scope="col" class="tp-num">Overall Value</th>
             </tr></thead>
             <tbody></tbody>
           </table>
@@ -319,6 +319,22 @@ window.NRPCTopParcels = (() => {
     }
     data = await loading;
     return data;
+  }
+
+  // The part of the map the open panel covers, as fractions of the view: {right} on desktop,
+  // {bottom} for the phone bottom sheet. A row's Zoom to widens its target on that side so the
+  // parcel lands in the uncovered map. (view.padding would also move the map's buttons.)
+  function covered() {
+    if (!panel || panel.classList.contains("hidden") || panel.classList.contains("tp-collapsed")) return {};
+    const r = panel.getBoundingClientRect(), v = view.container.getBoundingClientRect();
+    if (r.width >= v.width - 1) return { bottom: Math.max(0, (v.bottom - r.top) / v.height) };
+    return { right: Math.max(0, (v.right - r.left) / v.width) };
+  }
+  function uncoveredExtent(e) {
+    const c = covered(), out = e.clone();
+    if (c.right && c.right < 0.8) out.xmax = e.xmin + e.width / (1 - c.right);
+    if (c.bottom && c.bottom < 0.8) out.ymin = e.ymax - e.height / (1 - c.bottom);
+    return out;
   }
 
   async function toggle(open) {
