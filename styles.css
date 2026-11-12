@@ -1159,3 +1159,24 @@ body,
   #ps-input { width: 100%; height: 44px; font-size: 16px; }
   #ps-list li { padding: 11px 12px; }
 }
+
+/* ── Top parcels filters (round 10) ── */
+#sp-top .tp-filters { border: 1px solid #e3e3e3; border-radius: 3px; font-size: 12.5px; }
+#sp-top .tp-filters > summary { cursor: pointer; padding: 5px 8px; font-weight: 600; color: #1D5A8E; }
+#sp-top .tp-filters > summary:focus-visible { outline: 2px solid #1D5A8E; outline-offset: -2px; }
+#sp-top .tp-fcount { color: #8a4b00; font-weight: 600; }
+#sp-top .tp-fbody { display: flex; flex-wrap: wrap; gap: 6px 14px; padding: 4px 8px 8px; }
+#sp-top .tp-fset { border: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 2px 10px; align-items: center; }
+#sp-top .tp-fset legend { font-weight: 600; padding: 0; margin-bottom: 2px; width: 100%; }
+#sp-top .tp-fset label { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
+#sp-top .tp-fset input[type=number] { width: 64px; height: 26px; font-family: inherit; }
+#sp-top .tp-fclear { height: 28px; padding: 0 10px; border: 1px solid #ccc; border-radius: 3px; background: white; cursor: pointer; align-self: flex-end; }
+#sp-top .tp-fclear:disabled { color: #666; cursor: default; }
+#model-legend .ml-filterdim .ml-swatch { width: 30px; height: 16px; flex: none; border: 1px solid #b0b0b0;
+  background: linear-gradient(90deg, #cfcfcf, #ececec); opacity: 0.9; }
+#model-legend .ml-filterdim { margin-top: 3px; }
+@media (max-width: 760px) {
+  #sp-top .tp-fset label { min-height: 36px; }
+  #sp-top .tp-fset input[type=number] { height: 36px; width: 80px; }
+  #sp-top .tp-fclear { height: 40px; }
+}

@@ -1,0 +1,349 @@
+{
+ "n": 442996,
+ "layout": [
+  "pid:f8",
+  "fid:i4",
+  "rank:i4",
+  "acres:f4",
+  "overall:f4",
+  "class:u1",
+  "ptype:u1",
+  "owner:u1",
+  "city:u1",
+  "district:u1"
+ ],
+ "ptype_groups": [
+  "residential",
+  "agricultural",
+  "commercial",
+  "industrial",
+  "vacant",
+  "exempt",
+  "other"
+ ],
+ "owner_levels": [
+  "private",
+  "County",
+  "Educational",
+  "Federal",
+  "Metropolitan Council",
+  "Municipal",
+  "Park/Watershed Dist",
+  "State",
+  "State - MnDOT"
+ ],
+ "ptype_codes": {
+  "R": {
+   "name": "RESIDENTIAL",
+   "group": "residential",
+   "n": 275420
+  },
+  "(not in the county parcel layer)": {
+   "name": "",
+   "group": "other",
+   "n": 68866
+  },
+  "Y": {
+   "name": "TOWNHOUSE",
+   "group": "residential",
+   "n": 27416
+  },
+  "DB": {
+   "name": "RESIDENTIAL-TWO UNIT",
+   "group": "residential",
+   "n": 12338
+  },
+  "C": {
+   "name": "COMMERCIAL-PREFERRED",
+   "group": "commercial",
+   "n": 9452
+  },
+  "LR": {
+   "name": "VACANT LAND-RESIDENTIAL",
+   "group": "vacant",
+   "n": 9315
+  },
+  "RL": {
+   "name": "RESIDENTIAL",
+   "group": "residential",
+   "n": 7978
+  },
+  "A": {
+   "name": "APARTMENT",
+   "group": "residential",
+   "n": 4964
+  },
+  "RZ": {
+   "name": "RESIDENTIAL-ZERO LOT LINE",
+   "group": "residential",
+   "n": 3721
+  },
+  "K": {
+   "name": "COMMON AREA",
+   "group": "other",
+   "n": 3546
+  },
+  "": {
+   "name": "",
+   "group": "other",
+   "n": 3453
+  },
+  "I": {
+   "name": "INDUSTRIAL-PREFERRED",
+   "group": "industrial",
+   "n": 3214
+  },
+  "LC": {
+   "name": "LAND-COMMERCIAL",
+   "group": "vacant",
+   "n": 3105
+  },
+  "TP": {
+   "name": "TRIPLEX",
+   "group": "residential",
+   "n": 977
+  },
+  "S": {
+   "name": "SEASONAL-RESIDENTIAL REC",
+   "group": "residential",
+   "n": 957
+  },
+  "D": {
+   "name": "RESIDENTIAL",
+   "group": "residential",
+   "n": 939
+  },
+  "LI": {
+   "name": "LAND - INDUSTRIAL",
+   "group": "vacant",
+   "n": 872
+  },
+  "LL": {
+   "name": "VACANT LAND-RESIDENTIAL",
+   "group": "vacant",
+   "n": 793
+  },
+  "RM": {
+   "name": "RESIDENTIAL",
+   "group": "residential",
+   "n": 726
+  },
+  "F": {
+   "name": "FARM",
+   "group": "agricultural",
+   "n": 655
+  },
+  "HL": {
+   "name": "LOW INCOME RENTAL",
+   "group": "residential",
+   "n": 637
+  },
+  "CR": {
+   "name": "RAILROAD",
+   "group": "industrial",
+   "n": 603
+  },
+  "HT": {
+   "name": "",
+   "group": "other",
+   "n": 570
+  },
+  "LA": {
+   "name": "VACANT LAND-APARTMENT",
+   "group": "vacant",
+   "n": 470
+  },
+  "FF": {
+   "name": "FARM",
+   "group": "agricultural",
+   "n": 467
+  },
+  "HR": {
+   "name": "LOW INCOME RENTAL",
+   "group": "residential",
+   "n": 443
+  },
+  "B": {
+   "name": "RESIDENTIAL",
+   "group": "residential",
+   "n": 252
+  },
+  "X": {
+   "name": "CONDOMINIUM",
+   "group": "residential",
+   "n": 178
+  },
+  "LV": {
+   "name": "VACANT LAND-RURAL RESIDENTIAL",
+   "group": "vacant",
+   "n": 138
+  },
+  "XM": {
+   "name": "CONDO GARAGE/MISCELLANEOUS",
+   "group": "residential",
+   "n": 112
+  },
+  "U": {
+   "name": "UTILITY",
+   "group": "industrial",
+   "n": 88
+  },
+  "FP": {
+   "name": "AG PRESERVE",
+   "group": "agricultural",
+   "n": 78
+  },
+  "NH": {
+   "name": "MED/CARE FACILITY",
+   "group": "commercial",
+   "n": 55
+  },
+  "HF": {
+   "name": "SORORITY/FRATERNITY HOUSING",
+   "group": "residential",
+   "n": 52
+  },
+  "SM": {
+   "name": "MARINA",
+   "group": "commercial",
+   "n": 36
+  },
+  "LF": {
+   "name": "FARM - NON PRODUCTIVE LAND",
+   "group": "agricultural",
+   "n": 28
+  },
+  "NC": {
+   "name": "CHARTERED VET ORD DONATION",
+   "group": "exempt",
+   "n": 16
+  },
+  "GC": {
+   "name": "GOLF COURSE",
+   "group": "commercial",
+   "n": 14
+  },
+  "NP": {
+   "name": "COMMUNITY ORG NON REVENUE",
+   "group": "exempt",
+   "n": 12
+  },
+  "HX": {
+   "name": "",
+   "group": "other",
+   "n": 10
+  },
+  "HY": {
+   "name": "",
+   "group": "other",
+   "n": 8
+  },
+  "FM": {
+   "name": "AG NHSTD MULT UNIT",
+   "group": "agricultural",
+   "n": 5
+  },
+  "ME": {
+   "name": "MANUFACTURED HOME PK EDU CERT",
+   "group": "residential",
+   "n": 5
+  },
+  "SL": {
+   "name": "SEASONAL LAKESHORE RESTAURANT",
+   "group": "commercial",
+   "n": 4
+  },
+  "ND": {
+   "name": "COMMUNITY ORG DONATION",
+   "group": "exempt",
+   "n": 4
+  },
+  "MH": {
+   "name": "MOBILE HOME PARK",
+   "group": "residential",
+   "n": 2
+  },
+  "SC": {
+   "name": "SOCIAL CLUB",
+   "group": "commercial",
+   "n": 2
+  }
+ },
+ "cities": [
+  "Bloomington",
+  "Brooklyn Center",
+  "Brooklyn Park",
+  "Champlin",
+  "Chanhassen",
+  "Corcoran",
+  "Crystal",
+  "Dayton",
+  "Deephaven",
+  "Eden Prairie",
+  "Edina",
+  "Excelsior",
+  "Fort Snelling (unorg.)",
+  "Golden Valley",
+  "Greenfield",
+  "Greenwood",
+  "Hanover",
+  "Hopkins",
+  "Independence",
+  "Long Lake",
+  "Loretto",
+  "Maple Grove",
+  "Maple Plain",
+  "Medicine Lake",
+  "Medina",
+  "Minneapolis",
+  "Minnetonka",
+  "Minnetonka Beach",
+  "Minnetrista",
+  "Mound",
+  "New Hope",
+  "Orono",
+  "Osseo",
+  "Plymouth",
+  "Richfield",
+  "Robbinsdale",
+  "Rockford",
+  "Rogers",
+  "Shorewood",
+  "Spring Park",
+  "St. Anthony",
+  "St. Bonifacius",
+  "St. Louis Park",
+  "Tonka Bay",
+  "Wayzata",
+  "Woodland"
+ ],
+ "districts": [
+  "BASSETT CREEK",
+  "ELM CREEK",
+  "LOWER MINNESOTA RIVER",
+  "MINNEHAHA CREEK",
+  "MISSISSIPPI RIVER",
+  "NINE MILE CREEK",
+  "PIONEER-SARAH CREEK",
+  "RICE CREEK",
+  "RICHFIELD-BLOOMINGTON",
+  "RILEY/PURGATORY/BLUFF CREEK",
+  "SHINGLE CREEK",
+  "WEST MISSISSIPPI RIVER",
+  "WRIGHT COUNTY"
+ ],
+ "class_labels": [
+  "Extremely high",
+  "Very high",
+  "High",
+  "Moderately high",
+  "Moderate",
+  "Low",
+  "Very low"
+ ],
+ "raw_bytes": 12846884,
+ "sources": {
+  "ptype": "Hennepin County parcel layer, PROPERTY_TYPE_CD1",
+  "owner": "Public Parcels layer, OWNER_LVL"
+ }
+}

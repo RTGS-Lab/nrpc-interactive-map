@@ -75,8 +75,137 @@ window.NRPCTopParcels = (() => {
     return { kind: c.kind, items: c.items };
   }
 
+  // ── Filters (round 10; Bryan, 2026-11-12: "an option in the table to filter by other land use
+  // and ownership criteria like public/private") ──────────────────────────────────────────────
+  // Data: data/filter-v1.bin.gz + data/filter-v1-meta.json (06-output make-script), every ranked
+  // parcel in rank order; fetched the first time Filters is opened. Ownership = the county's
+  // public-parcel owner level (never owner names); property type = the county parcel layer's
+  // PROPERTY_TYPE_CD1 in plain groups; acres; model class. With a filter on, the list is every
+  // ranked parcel in the scope that passes it (no top-500 cap), ranked 1..N within the filter.
+  const F = { owner: "all", groups: new Set(), classes: new Set(), amin: null, amax: null };
+  let fdata = null, fdataLoading = null, filterEls = null, fmatch = null;
+  const filterOn = () => F.owner !== "all" || F.groups.size || F.classes.size || F.amin != null || F.amax != null;
+  const filterCount = () => (F.owner !== "all") + (F.groups.size > 0) + (F.classes.size > 0) + (F.amin != null || F.amax != null);
+
+  async function loadFilterData() {
+    if (fdata) return fdata;
+    fdataLoading = fdataLoading || (async () => {
+      const [meta, buf] = await Promise.all([
+        fetch("data/filter-v1-meta.json").then(r => r.json()),
+        fetch("data/filter-v1.bin.gz").then(r => r.arrayBuffer()),
+      ]);
+      let bytes = new Uint8Array(buf);
+      if (bytes[0] === 0x1f && bytes[1] === 0x8b) {
+        const st = new Blob([bytes]).stream().pipeThrough(new DecompressionStream("gzip"));
+        bytes = new Uint8Array(await new Response(st).arrayBuffer());
+      }
+      const n = meta.n, b = bytes.buffer;
+      let off = 0;
+      const take = (T, size) => { const a = new T(b.slice(off, off + n * size)); off += n * size; return a; };
+      return { meta, n, pid: take(Float64Array, 8), fid: take(Int32Array, 4), rank: take(Int32Array, 4),
+               acres: take(Float32Array, 4), overall: take(Float32Array, 4), cls: take(Uint8Array, 1),
+               ptype: take(Uint8Array, 1), owner: take(Uint8Array, 1), city: take(Uint8Array, 1), ws: take(Uint8Array, 1),
+               bytes: buf.byteLength };
+    })();
+    fdata = await fdataLoading;
+    return fdata;
+  }
+
+  const pidStr = x => String(Math.round(x)).padStart(13, "0");
+  function inScope(i) {
+    if (scope.kind === "county") return true;
+    return scope.items.some(it => it.kind === "city" ? fdata.meta.cities[fdata.city[i]] === it.name
+                                                     : fdata.meta.districts[fdata.ws[i]] === it.name);
+  }
+  function passes(i) {
+    if (F.owner === "public" && !fdata.owner[i]) return false;
+    if (F.owner === "private" && fdata.owner[i]) return false;
+    if (F.groups.size && !F.groups.has(fdata.ptype[i])) return false;
+    if (F.classes.size && !F.classes.has(fdata.cls[i])) return false;
+    if (F.amin != null && fdata.acres[i] < F.amin) return false;
+    if (F.amax != null && fdata.acres[i] > F.amax) return false;
+    return true;
+  }
+  const addrCache = new Map();
+  function filteredRows() {
+    const out = [], dim = [], keep = [];
+    const cityIdx = name => data.cities.indexOf(name);
+    for (let i = 0; i < fdata.n; i++) {
+      if (!inScope(i)) continue;
+      if (!passes(i)) { dim.push(fdata.fid[i]); continue; }
+      const pid = pidStr(fdata.pid[i]);
+      keep.push(fdata.fid[i]);
+      out.push([pid, fdata.rank[i], fdata.cls[i], fdata.acres[i], fdata.overall[i],
+                cityIdx(fdata.meta.cities[fdata.city[i]]), fdata.ws[i], addrCache.get(pid) ?? null, ""]);
+    }
+    fmatch = { pids: new Set(out.map(r => r[0])), dimFids: dim, matchFids: keep };
+    return out;
+  }
+  function filterDescription() {
+    const bits = [];
+    if (F.owner !== "all") bits.push(F.owner === "public" ? "Public" : "Private");
+    if (F.groups.size) bits.push([...F.groups].sort().map(g => titleCase(fdata.meta.ptype_groups[g])).join(" or "));
+    if (F.amin != null && F.amax != null) bits.push(`${F.amin} to ${F.amax} acres`);
+    else if (F.amin != null) bits.push(`${F.amin}+ acres`);
+    else if (F.amax != null) bits.push(`up to ${F.amax} acres`);
+    if (F.classes.size) bits.push([...F.classes].sort().map(c => data.class_labels[c]).join(" or "));
+    return bits.join(" · ");
+  }
+
+  // Map: parcels in the scope that do not pass are dimmed (a feature effect on the model layer,
+  // the same grey family as the city mask). Only parcels IN the scope are dimmed, so outside a
+  // city the city mask is the only grey: the two never stack.
+  const DIM = "grayscale(100%) opacity(35%)";
+  function applyDim() {
+    const lyr = model.layer;
+    if (!filterOn() || !fdata || !fmatch) { lyr.featureEffect = null; legendRow(false); return; }
+    // the shorter list: at county scope "keep these, dim the rest" when fewer parcels pass than
+    // fail (no city mask there, so nothing outside the scope can be double-dimmed)
+    lyr.featureEffect = scope.kind === "county" && fmatch.matchFids.length < fmatch.dimFids.length
+      ? { filter: { objectIds: fmatch.matchFids }, excludedEffect: DIM }
+      : { filter: { objectIds: fmatch.dimFids }, includedEffect: DIM };
+    legendRow(true);
+  }
+  function legendRow(on) {
+    const box = document.querySelector("#model-legend .ml-ramp");
+    let row = document.querySelector("#model-legend .ml-filterdim");
+    if (on && !row && box) {
+      row = document.createElement("div");
+      row.className = "ml-row ml-filterdim";
+      row.innerHTML = `<span class="ml-swatch"></span><span class="ml-label">Not in current filter</span>`;
+      const after = document.querySelector("#model-legend .ml-msp") || box;
+      after.after(row);
+    } else if (!on && row) row.remove();
+  }
+
+  // addresses for filtered rows on the page, from the county parcel layer (never owner fields)
+  async function fillAddresses() {
+    const need = [...tbody.querySelectorAll("tr[data-pid]")].map(tr => tr.dataset.pid).filter(p => !addrCache.has(p));
+    if (!need.length) return;
+    try {
+      const u = "https://gis.hennepin.us/arcgis/rest/services/Maps/NATURALRESOURCES/MapServer/2/query";
+      const d = await (await fetch(u, { method: "POST", body: new URLSearchParams({
+        where: `PID IN (${need.map(p => `'${p}'`).join(",")})`, outFields: "PID,HOUSE_NO,STREET_NM",
+        returnGeometry: "false", f: "json" }) })).json();
+      need.forEach(p => addrCache.set(p, ""));
+      (d.features || []).forEach(ft => {
+        const a = ft.attributes; let st = (a.STREET_NM || "").trim();
+        const hn = a.HOUSE_NO && !/ADDRESS UNASSIGNED/i.test(st) ? a.HOUSE_NO : "";
+        if (/ADDRESS UNASSIGNED/i.test(st)) st = "";
+        addrCache.set(String(a.PID).trim(), [hn, st].filter(Boolean).join(" "));
+      });
+      tbody.querySelectorAll("tr[data-pid]").forEach(tr => {
+        const td = tr.querySelector("td.tp-addr");
+        if (td && !td.textContent) td.textContent = addrCache.get(tr.dataset.pid) || "";
+      });
+      rows.forEach(r => { if (r[7] == null && addrCache.has(r[0])) r[7] = addrCache.get(r[0]); });
+    } catch (e) { /* addresses are a convenience; the PID is the key */ }
+  }
+
   // ── rows for a scope ────────────────────────────────────────────────────────────────────
   function rowsFor(s) {
+    if (filterOn() && fdata) return filteredRows();
+    fmatch = null;
     const S = data.scopes;
     if (s.kind === "county") return S.county.map(i => data.rows[i]);
     const seen = new Set(), out = [];
@@ -125,8 +254,13 @@ window.NRPCTopParcels = (() => {
   function columns() {
     const oneCity = scope.kind === "city" && scope.items.length === 1;
     const cols = [];
-    if (scope.kind !== "county") cols.push({ k: "pos", h: "#", t: "Position in this area", num: true });
-    cols.push({ k: "rank", h: "Rank", t: `Rank among ${fmt(data.parcels_ranked)} ranked parcels`, num: true });
+    if (filterOn() && fdata) {
+      cols.push({ k: "pos", h: "Rank in filter", t: "Rank among the parcels that pass the filter in this area", num: true });
+      cols.push({ k: "rank", h: "County rank", t: `Rank among ${fmt(data.parcels_ranked)} ranked parcels`, num: true });
+    } else {
+      if (scope.kind !== "county") cols.push({ k: "pos", h: "#", t: "Position in this area", num: true });
+      cols.push({ k: "rank", h: "Rank", t: `Rank among ${fmt(data.parcels_ranked)} ranked parcels`, num: true });
+    }
     cols.push({ k: "cls", h: "Class", t: "Class (legend v1.0)" });
     cols.push({ k: "pid", h: "PID", t: "Parcel ID" });
     cols.push({ k: "addr", h: "Address", t: "Street address" });
@@ -139,7 +273,9 @@ window.NRPCTopParcels = (() => {
   function render() {
     rows = rowsFor(scope);
     sec.setSummary(scopeLabel(scope));
-    scopeNote.textContent = `Top parcels in ${scopeLabel(scope)}`;
+    const fdesc = filterOn() && fdata ? filterDescription() : "";
+    scopeNote.textContent = fdesc ? `${scopeLabel(scope)} · ${fdesc}: ${fmt(rows.length)} parcels`
+                                  : `Top parcels in ${scopeLabel(scope)}`;
     statusLine.textContent = `Rank = rank among ${fmt(data.parcels_ranked)} ranked parcels. ` +
       `Already-protected (${fmt(data.excluded.protected)}) and MSP Airport ` +
       `(${fmt(data.excluded.msp)}) parcels are not ranked or listed. A parcel belongs to the city ` +
@@ -151,11 +287,18 @@ window.NRPCTopParcels = (() => {
     const n = Math.min(shown, rows.length);
     rows.slice(0, n).forEach((r, i) => tbody.appendChild(rowEl(r, i + 1, cols)));
     countLine.textContent = `Showing ${fmt(n)} of ${fmt(rows.length)}` +
-      (rows.length >= data.top_n && scope.kind !== "mixed" && (scope.items || []).length <= 1
+      (!fdesc && rows.length >= data.top_n && scope.kind !== "mixed" && (scope.items || []).length <= 1
         ? ` (each area lists its top ${fmt(data.top_n)})` : "");
     moreBtn.hidden = n >= rows.length;
     markSelected();
     fitRows();
+    applyDim();
+    if (fdesc) fillAddresses();
+    if (filterEls) {
+      const c = filterCount();
+      filterEls.count.textContent = c ? `(${c} on)` : "";
+      filterEls.clear.disabled = !c;
+    }
   }
 
   // With the card open below, the list is sized to show its first 6 rows (rows that wrap are
@@ -285,13 +428,15 @@ window.NRPCTopParcels = (() => {
 
   // ── CSV of the rows shown ────────────────────────────────────────────────────────────────
   function csv() {
-    const head = ["rank_in_scope", "rank_ranked_parcels", "class", "PID", "address", "city",
-                  "watershed_district", "acres", "overall_value", "published_rank"];
+    const desc = filterOn() && fdata ? filterDescription() : "";
+    const head = [desc ? "rank_in_filter" : "rank_in_scope", "rank_ranked_parcels", "class", "PID", "address", "city",
+                  "watershed_district", "acres", "overall_value", "published_rank", "scope", "filter"];
     const q = v => /[",\n]/.test(String(v)) ? `"${String(v).replace(/"/g, '""')}"` : String(v);
     const lines = [head.join(",")];
     rows.slice(0, Math.min(shown, rows.length)).forEach((r, i) => {
-      lines.push([i + 1, r[1], data.class_labels[r[2]], r[0], r[7], data.cities[r[5]] || "",
-                  data.watersheds[r[6]] || "", r[3], r[4], r[8]].map(q).join(","));
+      lines.push([i + 1, r[1], data.class_labels[r[2]], r[0], r[7] ?? "", data.cities[r[5]] || "",
+                  data.watersheds[r[6]] || "", Number(r[3]).toFixed(3), Number(r[4]).toFixed(4), r[8] ?? "",
+                  scopeLabel(scope), desc].map(q).join(","));
     });
     const blob = new Blob([lines.join("\n") + "\n"], { type: "text/csv" });
     const a = document.createElement("a");
@@ -316,6 +461,23 @@ window.NRPCTopParcels = (() => {
         <label class="tp-sr" for="tp-area">Area</label>
         <select id="tp-area" hidden></select>
       </div>
+      <details class="tp-filters">
+        <summary>Filters <span class="tp-fcount"></span></summary>
+        <div class="tp-fbody">
+          <fieldset class="tp-fset"><legend>Ownership</legend>
+            <label><input type="radio" name="tp-owner" value="all" checked> All</label>
+            <label><input type="radio" name="tp-owner" value="public"> Public</label>
+            <label><input type="radio" name="tp-owner" value="private"> Private</label>
+          </fieldset>
+          <fieldset class="tp-fset tp-fgroups"><legend>Property type</legend><span class="tp-fload">loading...</span></fieldset>
+          <fieldset class="tp-fset"><legend>Acres</legend>
+            <label>min <input type="number" class="tp-amin" min="0" step="any" inputmode="decimal"></label>
+            <label>max <input type="number" class="tp-amax" min="0" step="any" inputmode="decimal"></label>
+          </fieldset>
+          <fieldset class="tp-fset tp-fclasses"><legend>Model class</legend></fieldset>
+          <button type="button" class="tp-fclear" disabled>Clear all filters</button>
+        </div>
+      </details>
       <div class="tp-scope" aria-live="polite"></div>
       <div class="tp-actionbar">
         <button type="button" class="tp-zoomsel" disabled title="Select a row first">Zoom to selected</button>
@@ -359,7 +521,55 @@ window.NRPCTopParcels = (() => {
       setScope({ kind: k, items: [{ kind: k, name }] });
     });
     moreBtn.addEventListener("click", () => { shown += PAGE; render(); });
+    buildFilters(el.querySelector(".tp-filters"));
     el.querySelector(".tp-csv").addEventListener("click", csv);
+  }
+
+  function buildFilters(det) {
+    filterEls = { det, count: det.querySelector(".tp-fcount"), clear: det.querySelector(".tp-fclear") };
+    const changed = () => {
+      shown = PAGE;
+      if (data) { render(); dropStaleSelection(); }
+      if (card.pid && side.get("parcel").visible) card.select(card.pid, { open: false, focus: false });   // its filter note
+    };
+    det.addEventListener("toggle", async () => {
+      if (!det.open || fdata) return;
+      await loadFilterData();
+      const g = det.querySelector(".tp-fgroups");
+      g.querySelector(".tp-fload").remove();
+      const codes = fdata.meta.ptype_codes;
+      fdata.meta.ptype_groups.forEach((name, i) => {
+        const raw = Object.entries(codes).filter(([, v]) => v.group === name).map(([c, v]) => `${c} ${v.name}`.trim());
+        const lab = document.createElement("label");
+        lab.title = raw.length ? "County property type codes: " + raw.join("; ") : "";
+        lab.innerHTML = `<input type="checkbox" value="${i}"> ${titleCase(name)}`;
+        g.appendChild(lab);
+      });
+      const cl = det.querySelector(".tp-fclasses");
+      window.NRPCModelV1.CLASSES.forEach((c, i) => {
+        const lab = document.createElement("label");
+        lab.innerHTML = `<input type="checkbox" value="${i}"> <span class="tp-swatch" style="background:${c.color}"></span> ${data ? data.class_labels[i] : c.label}`;
+        cl.appendChild(lab);
+      });
+    });
+    det.addEventListener("change", e => {
+      const t = e.target;
+      if (t.name === "tp-owner") F.owner = t.value;
+      else if (t.closest(".tp-fgroups")) t.checked ? F.groups.add(+t.value) : F.groups.delete(+t.value);
+      else if (t.closest(".tp-fclasses")) t.checked ? F.classes.add(+t.value) : F.classes.delete(+t.value);
+      else if (t.classList.contains("tp-amin") || t.classList.contains("tp-amax")) {
+        const v = t.value === "" ? null : Math.max(0, Number(t.value));
+        if (t.classList.contains("tp-amin")) F.amin = v; else F.amax = v;
+      } else return;
+      changed();
+    });
+    filterEls.clear.addEventListener("click", () => {
+      F.owner = "all"; F.groups.clear(); F.classes.clear(); F.amin = null; F.amax = null;
+      det.querySelectorAll("input[type=checkbox]").forEach(x => { x.checked = false; });
+      det.querySelector("input[name=tp-owner][value=all]").checked = true;
+      det.querySelectorAll("input[type=number]").forEach(x => { x.value = ""; });
+      changed();
+    });
   }
 
   async function load() {
@@ -423,7 +633,12 @@ window.NRPCTopParcels = (() => {
       const f = card.markedFeature;
       if (f) { offscreen = card.isOffscreen(f); updateZoomButton(); }
     });
+    if (card.setNoteProvider) card.setNoteProvider(pid => filterOn() && fdata && fmatch && !fmatch.pids.has(pid)
+      ? "Not in current filter." : "");
     const api = { show: v2 => sec.show(v2 ?? !sec.visible), section: sec, setScope, selectParcel,
+                  get filter() { return { ...F, groups: [...F.groups], classes: [...F.classes], on: !!filterOn() }; },
+                  loadFilterData, get filterBytes() { return fdata && fdata.bytes; },
+                  get dimCount() { return fmatch ? fmatch.dimFids.length : 0; },
                   highlightRow, zoomSelected, get offscreen() { return offscreen; },
                   get rows() { return rows; }, get selectedPid() { return selectedPid; },
                   get scope() { return scope; } };

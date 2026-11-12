@@ -35,6 +35,7 @@ window.NRPCParcelCard = (() => {
   const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
   let view, model, side, sec, el, run = null, runLoading = null;
   const shards = new Map();
+  let noteProvider = null;          // e.g. the Top parcels filter: "Not in current filter."
   let current = null, marked = null, highlight = null, seq = 0, pulseLayer = null, lastPulse = 0;
   const listeners = [];
 
@@ -58,12 +59,17 @@ window.NRPCParcelCard = (() => {
   }
 
   // A source's text and its full-layer links (round 7 rule), shared by the card and the export.
+  // Round 11: the text is "label -- agency; date" with any part not on file simply left out (the
+  // make-script cleans caveats out of the layer cards; open questions are issue drafts).
+  function sourceText(s) {
+    const t = x => String(x ?? "").trim();
+    const head = [t(s.label), t(s.agency)].filter(Boolean).join(" -- ");
+    return [head, t(s.date)].filter(Boolean).join("; ");
+  }
   function sourceParts(s, links) {
-    const clean = t => String(t ?? "").replace(/\[NEEDS CONFIRM\]/g, "(not confirmed)");
     const full = String(s.url || "").split(/;\s*/).map(p => (p.match(/https?:\/\/\S+/) || [])[0])
       .filter(Boolean).map(u => links[u]).filter(v => v && v.verdict === "full" && v.link);
-    return { text: `${clean(s.label)} -- ${clean(s.agency)}; ${clean(s.date)}`,
-             links: full.map(v => ({ name: v.name, href: v.link })) };
+    return { text: sourceText(s), links: full.map(v => ({ name: v.name, href: v.link })) };
   }
 
   // One source line: "label -- agency; date", then links to the full layers it names, if any.
@@ -71,8 +77,7 @@ window.NRPCParcelCard = (() => {
     const full = String(s.url || "").split(/;\s*/).map(p => (p.match(/https?:\/\/\S+/) || [])[0])
       .filter(Boolean).map(u => links[u]).filter(v => v && v.verdict === "full" && v.link);
     const a = full.map(v => `<a href="${esc(v.link)}" target="_blank" rel="noopener">${esc(v.name)}</a>`);
-    const clean = t => String(t ?? "").replace(/\[NEEDS CONFIRM\]/g, "(not confirmed)");   // internal marker
-    return `<li class="pc-src">${esc(clean(s.label))} -- ${esc(clean(s.agency))}; ${esc(clean(s.date))}` +
+    return `<li class="pc-src">${esc(sourceText(s))}` +
       (a.length ? `. Source layer${a.length > 1 ? "s" : ""}: ${a.join(", ")}` : "") + `</li>`;
   }
 
@@ -293,9 +298,11 @@ window.NRPCParcelCard = (() => {
         ins.map(i => {
           const v = inputs[i.field] || {};
           const src = (i.sources || []).map(s => sourceLine(s, r.links || {})).join("");
-          return `<li><span class="pc-in-label">${esc(i.label)}</span>: value read ${esc(v.value ?? "[not on file]")},
-            ${v.points == null ? "[not on file]" : v.points.toFixed(2)} points, within-category weight
-            ${Math.round(100 * i.within)}%${src ? `<ul class="pc-srcs">${src}</ul>` : ""}</li>`;
+          const facts = [v.value != null ? `value read ${esc(v.value)}` : "",
+                         v.points != null ? `${v.points.toFixed(2)} points` : "",
+                         `within-category weight ${Math.round(100 * i.within)}%`].filter(Boolean).join(", ");
+          return `<li><span class="pc-in-label">${esc(i.label)}</span>: ${facts}` +
+            `${src ? `<ul class="pc-srcs">${src}</ul>` : ""}</li>`;
         }).join("") + `</ul></details>` : "";
       return `<tr>
           <th scope="row">${esc(c.label)} <span class="pc-w">${Math.round(100 * c.weight)}%</span></th>
@@ -365,6 +372,7 @@ window.NRPCParcelCard = (() => {
       <ul class="pc-why">${why.map(s => `<li>${esc(s)}</li>`).join("")}</ul>
       ${inputs === null ? `<p class="pc-status">Inputs not published for this run.</p>`
         : inputs === undefined ? `<p class="pc-status">Loading inputs...</p>` : ""}
+      ${noteProvider && noteProvider(pid) ? `<p class="pc-status pc-filter-note">${esc(noteProvider(pid))}</p>` : ""}
       ${metcBlock(pid)}
       <details class="pc-record"><summary>Parcel record</summary>
         <table class="pc-facts"><tbody>
@@ -404,6 +412,7 @@ window.NRPCParcelCard = (() => {
       if (g && g.graphic.attributes && g.graphic.attributes.PID) select(g.graphic.attributes.PID, { from: "map" });
     });
     const api = { select, mark, clear, zoomTo, turnModelOn, isOffscreen, onChange: fn => listeners.push(fn),
+                  setNoteProvider: fn => { noteProvider = fn; },
                   get markedPid() { return marked && marked.pid; }, get lastPulse() { return lastPulse; },
                   get markedFeature() { return marked && marked.feature; },
                   get pid() { return current && current.pid; },

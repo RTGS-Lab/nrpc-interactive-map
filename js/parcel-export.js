@@ -350,8 +350,9 @@ window.NRPCParcelExport = (() => {
         s.append(el("h3", { textContent: c.label }));
         const ul = el("ul");
         ins.forEach(i => {
-          const li = el("li", { textContent: `${i.label}: value read ${i.value ?? "[not on file]"}, ` +
-            `${i.points == null ? "[not on file]" : i.points.toFixed(2)} points, within-category weight ${Math.round(100 * i.within)}%. ` });
+          const facts = [i.value != null ? `value read ${i.value}` : "", i.points != null ? `${i.points.toFixed(2)} points` : "",
+                         `within-category weight ${Math.round(100 * i.within)}%`].filter(Boolean).join(", ");
+          const li = el("li", { textContent: `${i.label}: ${facts}. ` });
           i.sources.forEach(src => {
             li.append(document.createTextNode(`Source: ${src.text}`));
             src.links.forEach((l, k) => {
@@ -371,7 +372,7 @@ window.NRPCParcelExport = (() => {
 
     const foot = el("footer", { className: "pr-print-foot" });
     foot.append(el("p", { textContent: `${P.runLabel} · map build: branch protected-rerank${meta.commit ? " " + meta.commit : ""} · ` +
-                                       `card data built ${meta.built || "[not on file]"} · exported ${fmtDateTime(meta.generatedAt)}` }),
+                                       `${meta.built ? `card data built ${meta.built} · ` : ""}exported ${fmtDateTime(meta.generatedAt)}` }),
                 el("p", { textContent: SOURCE_LINE }));
     root.append(foot);
   }
