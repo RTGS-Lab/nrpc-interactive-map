@@ -1119,3 +1119,21 @@ body,
 .pc-exportbar .pc-export:hover { background: #f3f3f3; }
 .pc-exportbar .pc-export:focus-visible { outline: 2px solid #1D5A8E; outline-offset: 2px; }
 @media (max-width: 760px) { .pc-exportbar .pc-export { height: 44px; } }
+
+/* Parcel card: Metropolitan Council layers checklist (read-only indicators, js/metc-layers.js) */
+.pc-card .pc-metc-list { list-style: none; margin: 4px 0 6px; padding: 0; }
+.pc-card .pc-metc-row { display: grid; grid-template-columns: 18px minmax(0, 1fr) minmax(0, 1.2fr); gap: 4px 8px;
+  align-items: start; padding: 4px 0; border-bottom: 1px solid #f0f0f0; font-size: 12.5px; }
+.pc-card .pc-check { width: 14px; height: 14px; border: 1.5px solid #666; border-radius: 2px; margin-top: 1px;
+  box-sizing: border-box; position: relative; background: white; }
+.pc-card .pc-metc-yes .pc-check { background: #13706F; border-color: #13706F; }
+.pc-card .pc-metc-yes .pc-check::after { content: ""; position: absolute; left: 3.5px; top: 0.5px; width: 4px; height: 8px;
+  border: solid white; border-width: 0 2px 2px 0; transform: rotate(45deg); }
+.pc-card .pc-metc-pending .pc-check, .pc-card .pc-metc-error .pc-check { border-style: dashed; border-color: #999; }
+.pc-card .pc-metc-name { font-weight: 600; }
+.pc-card .pc-metc-val { color: #444; }
+.pc-card .pc-metc-pending .pc-metc-val, .pc-card .pc-metc-error .pc-metc-val { color: #666; font-style: italic; }
+@media (max-width: 760px) {
+  .pc-card .pc-metc-row { grid-template-columns: 18px minmax(0, 1fr); }
+  .pc-card .pc-metc-val { grid-column: 2; }
+}

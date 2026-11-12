@@ -179,6 +179,7 @@ window.NRPCParcelCard = (() => {
     if (opts.open !== false) { sec.show(true); if (!sec.expanded) sec.expand(true); }
     setHighlight(f);
     renderCard(pid, f, r, undefined, "");          // inputs loading
+    if (f && window.NRPCMetc) window.NRPCMetc.summary(pid, f.geometry).then(() => refreshMetc(pid)).catch(() => {});
     listeners.forEach(fn => fn(pid));
     if (opts.focus !== false) focusHeading();
     const [inputs, addr] = await Promise.all([f ? loadShard(pid).catch(() => null) : null, address(pid)]);
@@ -218,6 +219,31 @@ window.NRPCParcelCard = (() => {
     if (pulseLayer) pulseLayer.removeAll();
     if (sec.visible) sec.show(false);
     listeners.forEach(fn => fn(null));
+  }
+
+  // ── Metropolitan Council layers (Bryan, 2026-11-12: "METC checkboxes in the parcel report that
+  // shows in the app"): a read-only checklist from js/metc-layers.js, the same list, order and
+  // words as the export; the indicator is an image, not an input, so it cannot look editable.
+  function metcRowsHtml(pid) {
+    const M = window.NRPCMetc;
+    const rows = M.cached(pid);
+    return M.LAYERS.map((l, i) => {
+      const r = rows && rows[i];
+      const state = !r ? "pending" : r.error ? "error" : r.count ? "yes" : "no";
+      const aria = state === "yes" ? "Included" : state === "no" ? "Not included" : state === "error" ? "Could not check" : "Checking";
+      const val = !r ? "checking Met Council layers..." : M.valueText(r);
+      return `<li class="pc-metc-row pc-metc-${state}"><span class="pc-check" role="img" aria-label="${aria}"></span>` +
+             `<span class="pc-metc-name">${esc(l.label)}</span><span class="pc-metc-val">${esc(val)}</span></li>`;
+    }).join("");
+  }
+  function metcBlock(pid) {
+    if (!window.NRPCMetc) return "";
+    return `<details class="pc-metc" open><summary>Metropolitan Council layers</summary>
+      <ul class="pc-metc-list">${metcRowsHtml(pid)}</ul></details>`;
+  }
+  function refreshMetc(pid) {
+    const ul = el.querySelector(".pc-metc-list");
+    if (ul && current && current.pid === pid) ul.innerHTML = metcRowsHtml(pid);
   }
 
   // ── render ───────────────────────────────────────────────────────────────────────────────
@@ -339,6 +365,7 @@ window.NRPCParcelCard = (() => {
       <ul class="pc-why">${why.map(s => `<li>${esc(s)}</li>`).join("")}</ul>
       ${inputs === null ? `<p class="pc-status">Inputs not published for this run.</p>`
         : inputs === undefined ? `<p class="pc-status">Loading inputs...</p>` : ""}
+      ${metcBlock(pid)}
       <details class="pc-record"><summary>Parcel record</summary>
         <table class="pc-facts"><tbody>
           <tr><th scope="row">PID</th><td>${esc(pid)}</td></tr>
@@ -382,6 +409,7 @@ window.NRPCParcelCard = (() => {
                   get pid() { return current && current.pid; },
                   get feature() { return current && current.feature; },
                   get print() { return current && current.print; },
+                  get metc() { return current && window.NRPCMetc ? window.NRPCMetc.cached(current.pid) : null; },
                   get numbers() { return current && current.numbers; }, section: sec };
     if (window.__nrpc) window.__nrpc.card = api;
     return api;

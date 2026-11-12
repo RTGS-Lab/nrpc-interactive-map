@@ -180,66 +180,14 @@ window.NRPCParcelExport = (() => {
     } catch (e) { console.warn("[parcel-export] county outline failed", e); return null; }
   }
 
-  // ── Metropolitan Council layers (Bryan, 2026-11-12: "also include a summary of the METC
-  // layers"). The six layer definitions of the web map's "Metropolitan Council Data" group; the
-  // reference's CONTEXT_LAYERS (parcel-report.js @891c06a) carried four of them with the same
-  // service URLs and fields. Read-only spatial query with the parcel polygon, run in parallel;
-  // share of parcel area from the returned geometries (planar Web Mercator: the distortion is the
-  // same for parcel and overlap, so the share holds). Sources are the map's own hosted copies
-  // (AGOL owner runcklab_UMN), so they print as plain text (round-7 rule: no link unless it is
-  // the full source layer).
-  const METC = "https://services.arcgis.com/8df8p0NlLFEShl0r/arcgis/rest/services/";
-  const METC_LAYERS = [
-    { label: "Protection Opportunities", url: METC + "Met_Council_Data_Protection_Opportunities/FeatureServer/103", field: "source" },
-    { label: "Improvement Opportunities", url: METC + "Met_Council_Data_Improvement_Opportunities/FeatureServer/104", field: "source" },
-    { label: "Existing Natural Systems -- Aquatic", url: METC + "Met_Council_Data_Existing_Natural_Systems/FeatureServer/105", field: "system", where: "system = 'Aquatic'" },
-    { label: "Existing Natural Systems -- Terrestrial", url: METC + "Met_Council_Data_Existing_Natural_Systems/FeatureServer/105", field: "system", where: "system = 'Terrestrial'" },
-    { label: "Ecologically Sensitive Areas", url: METC + "Met_Council_Data_Ecologically_Sensitive_Areas/FeatureServer/108", field: "source" },
-    { label: "Ecologically Significant Areas", url: METC + "Met_Council_Data_Ecologically_Significant_Areas/FeatureServer/106", field: "source" },
-  ];
-
-  async function metcSummary(parcelGeom) {
-    const m = await loadModules();
-    const g = parcelGeom.toJSON ? parcelGeom.toJSON() : parcelGeom;
-    const area = Math.abs(m.geometryEngine.planarArea(parcelGeom, "square-meters")) || 0;
-    const body = l => new URLSearchParams({ where: l.where || "1=1", geometry: JSON.stringify(g),
-      geometryType: "esriGeometryPolygon", inSR: String(g.spatialReference.wkid || 3857),
-      spatialRel: "esriSpatialRelIntersects", outFields: `${l.field},CTU_NAME`, returnGeometry: "true",
-      outSR: String(g.spatialReference.wkid || 3857), f: "json" });
-    return Promise.all(METC_LAYERS.map(async l => {
-      try {
-        const [q, info] = await Promise.all([
-          fetch(l.url + "/query", { method: "POST", body: body(l) }).then(r => r.json()),
-          fetch(l.url + "?f=json").then(r => r.json()).catch(() => ({})),
-        ]);
-        if (q.error) throw new Error(q.error.message);
-        const feats = q.features || [];
-        let overlap = 0;
-        feats.forEach(ft => {
-          try {
-            const poly = new m.Polygon({ ...ft.geometry, spatialReference: g.spatialReference });
-            const x = m.geometryEngine.intersect(poly, parcelGeom);
-            if (x) overlap += Math.abs(m.geometryEngine.planarArea(x, "square-meters"));
-          } catch (e) { /* skip a bad geometry */ }
-        });
-        const values = [...new Set(feats.map(ft => clean(ft.attributes[l.field])).filter(Boolean))];
-        const edited = info.editingInfo && info.editingInfo.dataLastEditDate
-          ? new Date(info.editingInfo.dataLastEditDate).toISOString().slice(0, 10) : null;
-        return { ...l, count: feats.length, values, share: area ? Math.min(1, overlap / area) : null, edited, error: null };
-      } catch (e) {
-        return { ...l, count: 0, values: [], share: null, edited: null, error: e.message };
-      }
-    }));
+  // ── Metropolitan Council layers: js/metc-layers.js (shared with the Parcel card; cached per PID,
+  // so an export after the card reuses its results) ──
+  async function metcSummary(pid, parcelGeom) {
+    return window.NRPCMetc ? window.NRPCMetc.summary(pid, parcelGeom) : null;
   }
-
   function metcRows(rows) {
-    return rows.map(r => {
-      const src = `Source: Metropolitan Council, the map's hosted copy${r.edited ? `, data last edited ${r.edited}` : ""}.`;
-      if (r.error) return [r.label, `layer unavailable at export time. ${src}`];
-      if (!r.count) return [r.label, `none at this parcel. ${src}`];
-      const share = r.share == null ? "" : `; ${r.share >= 0.995 ? "100" : (100 * r.share).toFixed(r.share < 0.01 ? 1 : 0)}% of the parcel area`;
-      return [r.label, `yes -- ${r.values.join("; ") || "intersects"}${share}. ${src}`];
-    });
+    const M = window.NRPCMetc;
+    return rows.map(r => [r.label, `${r.error ? "" : r.count ? "yes -- " : ""}${M.valueText(r)}. ${M.sourceText(r)}`]);
   }
 
   // ── county record (no owner fields) ──────────────────────────────────────────────────────
@@ -456,7 +404,7 @@ window.NRPCParcelExport = (() => {
     btn.disabled = true; btn.textContent = "Preparing maps…";
     try {
       const geom = card.feature.geometry;
-      const metcJob = metcSummary(geom);          // in parallel with the map captures
+      const metcJob = metcSummary(P.pid, geom);   // in parallel with the map captures; cached per PID
       const [facts, rec, run] = await Promise.all([
         capture("facts", geom, { marginFraction: 0.35 }),
         countyRecord(P.pid), fetch("data/card-v1-run.json").then(r => r.json()).catch(() => ({})),
@@ -468,7 +416,8 @@ window.NRPCParcelExport = (() => {
       const meta = { generatedAt: new Date(), built: run.source && run.source.built, commit: window.NRPC_BUILD || "" };
       buildPrintDoc(printRoot, P, rec, { facts, locator: loc }, meta, metc);
       lastDoc = { pid: P.pid, facts: !!facts, locator: !!loc, record: !!rec,
-                  metc: metc.map(r => ({ label: r.label, count: r.count, values: r.values, share: r.share, error: r.error })) };
+                  metc: (metc || []).map(r => ({ label: r.label, count: r.count, values: r.values, share: r.share, error: r.error,
+                                                 text: window.NRPCMetc.valueText(r) })) };
       return P;
     } finally { btn.disabled = false; btn.textContent = label; }
   }
