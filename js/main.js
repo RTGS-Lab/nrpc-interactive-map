@@ -441,9 +441,11 @@ require([
             icon: "sliders-horizontal"
           };
 
+          // A visibility change never opens or closes the group: rows below it must not move while
+          // someone flicks layers on and off (Bryan, 2026-11-12, round 12). Children show on the
+          // group's own disclosure click only.
           layer.watch("visible", visible => {
             if (visible) {
-              item.open = true;
               if (propagatingDepth === 0 && !skipChildCascade) {
                 layer.layers.forEach(child => { child.visible = true; });
               }
@@ -454,8 +456,6 @@ require([
                 p = p.parent;
               }
               propagatingDepth--;
-            } else {
-              item.open = false;
             }
           });
           return;
@@ -1302,6 +1302,9 @@ require([
       .filter(l => l.type === "group" && l.title && !l.title.toLowerCase().includes("boundaries"))
       .forEach(layer => {
         const handle = layer.watch("visible", visible => {
+          // not on a phone: there one panel shows at a time, so opening the Legend would close the
+          // Layers pane under the user's finger (round 12)
+          if (window.innerWidth <= 760) return;
           if (visible && !legendAutoShown) {
             legendAutoShown = true;
             legendWrapper.classList.remove("hidden");

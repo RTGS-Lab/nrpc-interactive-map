@@ -120,7 +120,19 @@ window.NRPCUiFixes = (() => {
     // ── left panels start under the toolbar (it wraps on a phone) ───────────────────────────
     const place = () => {
       const r = refs.toggleBar.getBoundingClientRect();
-      if (r.height) refs.panelsContainer.style.top = `${Math.round(r.bottom + 8)}px`;
+      if (!r.height) return;
+      const top = Math.round(r.bottom + 8);
+      refs.panelsContainer.style.top = `${top}px`;
+      // round 12: the panel column ends inside the viewport wherever the toolbar ends
+      refs.panelsContainer.style.maxHeight = `calc(100dvh - ${top + 12}px)`;
+      // round 12: on a phone the Contribute panel (map's top-right corner) opened over the wrapped
+      // toolbar and covered its own button, so it could not be closed; it starts under the toolbar
+      const cw = refs.contributeWrapper;
+      if (cw) {
+        const cTop = cw.parentElement ? cw.parentElement.getBoundingClientRect().top : 15;
+        cw.style.marginTop = isPhone() ? `${Math.max(0, top - Math.round(cTop))}px` : "";
+        cw.style.maxHeight = isPhone() ? `calc(100dvh - ${top + 24}px)` : "";
+      }
     };
     new ResizeObserver(place).observe(refs.toggleBar);
     window.addEventListener("resize", place);
@@ -156,6 +168,23 @@ window.NRPCUiFixes = (() => {
         (Array.isArray(pt.content) ? pt.content : []).forEach(c => { if (c && c.type === "fields") tidy(c.fieldInfos); });
       }).catch(() => {});
     });
+
+    // Round 12: the Legend sits above Layers in one column and grows as layers come on, which
+    // pushed the Layers pane down under the pointer. While the pointer or focus is in the Layers
+    // pane the Legend keeps its current height (its content scrolls); released on leave.
+    const legend = refs.legendWrapper, layersPane = refs.layerListWrapper;
+    if (legend && layersPane) {
+      let held = false;
+      const hold = () => { if (held) return; held = true; legend.style.height = `${legend.getBoundingClientRect().height}px`; };
+      const release = () => {
+        if (!held || layersPane.matches(":hover") || layersPane.contains(document.activeElement)) return;
+        held = false; legend.style.height = "";
+      };
+      layersPane.addEventListener("pointerenter", hold);
+      layersPane.addEventListener("focusin", hold);
+      layersPane.addEventListener("pointerleave", () => setTimeout(release, 0));
+      layersPane.addEventListener("focusout", () => setTimeout(release, 0));
+    }
 
     return { sync, closeMenus };
   }

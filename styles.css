@@ -1180,3 +1180,19 @@ body,
   #sp-top .tp-fset input[type=number] { height: 36px; width: 80px; }
   #sp-top .tp-fclear { height: 40px; }
 }
+
+/* ── Round 12: a Layers pane that does not move under the pointer ── */
+/* fixed height while open (no resize when a group's children or a layer's rows change);
+   the list scrolls inside; no scroll anchoring jumps */
+#layer-list-wrapper.panel { height: min(45vh, 420px); max-height: none; }
+#layer-list-container { overflow-y: auto; overflow-anchor: none; }
+#legend-container, #legend-wrapper { overflow-anchor: none; }
+/* the panel column ends inside the viewport: on a 720 px laptop the Legend (50vh) + Layers stack
+   ran 40 px past the bottom, so the page itself scrolled and moved the whole pane. Only the
+   Legend gives up height (its content scrolls); the other panels keep theirs. */
+#panels-container { max-height: calc(100vh - 80px); max-height: calc(100dvh - 80px); }
+#panels-container > .panel { flex-shrink: 0; }
+#panels-container > #legend-wrapper.panel { flex-shrink: 1; min-height: 120px; }
+@media (max-width: 760px) {
+  #layer-list-wrapper.panel { height: 40vh; }
+}
