@@ -126,6 +126,13 @@ window.NRPCUiFixes = (() => {
     window.addEventListener("resize", place);
     place();
 
+    // the toolbar wraps inside the map area left of the side panel, so no button sits under it
+    const fit = () => {
+      const right = (view.padding && view.padding.right) || 0;
+      refs.toggleBar.style.maxWidth = `${Math.max(240, window.innerWidth - right - (isPhone() ? 88 : 80))}px`;
+    };
+    view.watch("padding", fit); window.addEventListener("resize", fit); fit();
+
     // ── disabled Zoom says why ─────────────────────────────────────────────────────────────
     const zb = byId("city-zoom-btn");
     if (zb) {

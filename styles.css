@@ -1137,3 +1137,25 @@ body,
   .pc-card .pc-metc-row { grid-template-columns: 18px minmax(0, 1fr); }
   .pc-card .pc-metc-val { grid-column: 2; }
 }
+
+/* ── Toolbar search (js/parcel-search.js) ── */
+#toggle-bar { flex-wrap: wrap; }
+#ps-wrap { position: relative; display: flex; align-items: center; }
+#ps-input { height: 32px; width: 230px; box-sizing: border-box; padding: 0 28px 0 9px; border: 1px solid #ccc;
+  border-radius: 3px; font-family: inherit; font-size: 13.5px; color: #222; }
+#ps-input:focus-visible { outline: 2px solid #1D5A8E; outline-offset: 1px; }
+#ps-input::-webkit-search-cancel-button { display: none; }
+#ps-clear { position: absolute; right: 4px; top: 50%; transform: translateY(-50%); border: none; background: none;
+  font-size: 18px; color: #666; cursor: pointer; width: 24px; height: 24px; }
+#ps-list { position: fixed; z-index: 210; margin: 0; padding: 4px 0; list-style: none; background: white;
+  border: 1px solid #ccc; border-radius: 4px; box-shadow: 0 2px 8px rgba(0,0,0,0.15); max-height: 340px; overflow: auto;
+  font-family: "Avenir Next", "Segoe UI", Arial, sans-serif; font-size: 13px; max-width: calc(100vw - 16px); }
+#ps-list[hidden] { display: none; }
+#ps-list li { padding: 7px 10px; cursor: pointer; color: #222; }
+#ps-list li.ps-active, #ps-list li[data-pid]:hover { background: #e8f4fb; }
+#ps-list li.ps-none { color: #666; cursor: default; }
+@media (max-width: 760px) {
+  #ps-wrap { flex: 1 0 100%; order: -1; }
+  #ps-input { width: 100%; height: 44px; font-size: 16px; }
+  #ps-list li { padding: 11px 12px; }
+}

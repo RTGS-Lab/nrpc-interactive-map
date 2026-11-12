@@ -321,6 +321,8 @@ require([
     if (window.__nrpc) window.__nrpc.side = sidePanel;
     const parcelCard = sidePanel && window.NRPCParcelCard
       ? window.NRPCParcelCard.init(view, modelV1.model, sidePanel, { GraphicsLayer, Graphic }) : null;
+    // Toolbar search by address or PID (js/parcel-search.js); a result acts like "Zoom to selected"
+    if (parcelCard && window.NRPCSearch) window.NRPCSearch.init(view, parcelCard, toggleBar);
     // Parcel export, PDF and Word (js/parcel-export.js + js/docx-writer.js); drop-out safe
     if (parcelCard && window.NRPCParcelExport) window.NRPCParcelExport.init(parcelCard);
     if (parcelCard && window.NRPCTopParcels)
