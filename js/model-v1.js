@@ -167,10 +167,20 @@ window.NRPCModelV1 = (() => {
     const group = new GroupLayer({ title: "Water", visible: true, listMode: "hide-children",
                                    layers: [fill] });
     group.nrpcWater = true;
-    // directly above the model group so lakes draw over the model fill
-    const idx = modelGroup ? map.layers.indexOf(modelGroup) : -1;
-    map.layers.add(group, idx >= 0 ? idx + 1 : map.layers.length);
-    const water = { group, fill, names: null, rivers: null };
+    // In the "Public Data - Natural Systems" group, on at load (Bryan, 2026-11-12: "add the water
+    // to the Public Data - Natural Systems set of layers, but start with it on still"). That group
+    // draws above the model group, so lakes still draw over the model fill. Its other layers stay
+    // off: they are off in the web map, and the LayerList's "turn on all children" watcher is not
+    // registered yet when this runs. Fallback: directly above the model group, as before.
+    const natsys = map.layers.find(l => l.type === "group" && /Public Data\s*-\s*Natural Systems/i.test(l.title || ""));
+    if (natsys) {
+      natsys.add(group, natsys.layers.length);          // top of the group
+      natsys.visible = true;
+    } else {
+      const idx = modelGroup ? map.layers.indexOf(modelGroup) : -1;
+      map.layers.add(group, idx >= 0 ? idx + 1 : map.layers.length);
+    }
+    const water = { group, fill, natsys, names: null, rivers: null };
     water.ready = buildWaterNames(view, deps, source, group, water);
     return water;
   }
@@ -342,7 +352,8 @@ window.NRPCModelV1 = (() => {
         ? "none" : "";
     }
     view.watch("stationary", refresh);
-    [model && model.layer, model && model.group, water && water.group, water && water.fill]
+    [model && model.layer, model && model.group, water && water.group, water && water.fill,
+     water && water.natsys]
       .filter(Boolean).forEach(l => l.watch("visible", refresh));
     refresh();
     return { refresh };

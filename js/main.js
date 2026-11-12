@@ -87,6 +87,11 @@ require([
     const protectedV1 = window.NRPCProtected
       ? window.NRPCProtected.apply(view, { GeoJSONLayer }, modelV1.model) : null;
     if (new URLSearchParams(location.search).has("debug")) window.__nrpc = { view, modelV1, protectedV1 };
+
+    // The Zoom to tool's one zoom path, shared with the Top parcels table (js/top-parcels.js):
+    // same goTo, default animation, extent grown by the same factor.
+    function zoomToExtent(extent, factor) { return view.goTo(extent.expand(factor)); }
+    window.NRPCZoomTo = { zoomToExtent, AREA_FACTOR: 1.5 };
     view.ui.add(new ScaleBar({ view, unit: "imperial" }), "bottom-left");
 
     const openTabBtn = document.createElement("div");
@@ -302,6 +307,8 @@ require([
     toggleBar.appendChild(clipZipWrapper);
 
     view.ui.add(toggleBar, { position: "top-left", index: 0 });
+    // Top parcels table (js/top-parcels.js): button after Layers; scope follows Zoom to
+    if (window.NRPCTopParcels) window.NRPCTopParcels.init(view, modelV1.model, layersToggle);
 
     // ── Panel stack container ─────────────────────────────────────────────────
     const panelsContainer = document.createElement("div");
@@ -790,7 +797,7 @@ require([
 
       cityZoomBtn.addEventListener("click", () => {
         if (fullCountySelected && countyGeometryCache) {
-          view.goTo(countyGeometryCache.extent.expand(1.1));
+          zoomToExtent(countyGeometryCache.extent, 1.1);
           cityDropdownList.classList.add("hidden");
           cityDropdownBtn.classList.remove("active");
           return;
@@ -822,7 +829,7 @@ require([
           for (let i = 1; i < features.length; i++) {
             extent = extent.union(features[i].geometry.extent);
           }
-          view.goTo(extent.expand(1.5));
+          zoomToExtent(extent, 1.5);
           cityDropdownList.classList.add("hidden");
           cityDropdownBtn.classList.remove("active");
         });
