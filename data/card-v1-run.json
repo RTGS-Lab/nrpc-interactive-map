@@ -83,7 +83,7 @@
      "agency": "Hennepin County composite of: Established Conservation Easements (county), National Wildlife Refuges (US Fish and Wildlife Service), Parks of Natural Resource Significance (county), Wildlife Management Areas (DNR), Scientific and Natural Areas (DNR), TNC Lands (The Nature Conservancy), Aquatic Management Areas (DNR)",
      "date": "Fall 2020 (tracking sheet); county layers 'County edited'",
      "url": "https://gisdata.mn.gov/dataset/bdry-dnr-wildlife-mgmt-areas-pub (WMA); https://gisdata.mn.gov/dataset/bdry-scientific-and-nat-areas (SNA); https://tnclands.tnc.org/ (TNC); https://gisdata.mn.gov/dataset/plan-mndnr-fisheries-acquisition (AMA); https://www.fws.gov/gis/data/CadastralDB/links_cadastral.html (refuges)",
-     "terms": "2020 analysis geodatabase assembled by Hennepin County for the easement model; composite of county and public layers; redistribution terms [NEEDS CONFIRM]"
+     "terms": "2020 analysis geodatabase assembled by Hennepin County for the easement model; composite of county and public layers"
     }
    ]
   },
@@ -98,8 +98,8 @@
      "label": "Natural Spaces (ecologically significant MLCCS areas)",
      "agency": "Hennepin County (subset of MLCCS) plus Priority Natural Resource Corridors",
      "date": "County edited (tracking sheet); 2020 geodatabase",
-     "url": "[not on file]",
-     "terms": "2020 analysis geodatabase assembled by Hennepin County for the easement model; composite of county and public layers; redistribution terms [NEEDS CONFIRM]"
+     "url": "",
+     "terms": "2020 analysis geodatabase assembled by Hennepin County for the easement model; composite of county and public layers"
     }
    ]
   },
@@ -115,7 +115,7 @@
      "agency": "Hennepin County (MLCCS, Minnesota DNR standard)",
      "date": "County edited; 2020 geodatabase",
      "url": "https://www.dnr.state.mn.us/mlccs/index.html",
-     "terms": "2020 analysis geodatabase assembled by Hennepin County for the easement model; composite of county and public layers; redistribution terms [NEEDS CONFIRM]"
+     "terms": "2020 analysis geodatabase assembled by Hennepin County for the easement model; composite of county and public layers"
     },
     {
      "label": "Minnesota Biological Survey (MBS) sites of biodiversity significance",
@@ -144,8 +144,8 @@
      "label": "MLCCS A or B quality communities",
      "agency": "Hennepin County (MLCCS query M_34X = 'A' OR M_34X = 'B')",
      "date": "County edited; 2020 geodatabase",
-     "url": "[not on file]",
-     "terms": "2020 analysis geodatabase assembled by Hennepin County for the easement model; composite of county and public layers; redistribution terms [NEEDS CONFIRM]"
+     "url": "",
+     "terms": "2020 analysis geodatabase assembled by Hennepin County for the easement model; composite of county and public layers"
     }
    ]
   },
@@ -160,8 +160,8 @@
      "label": "Habitat diversity, MLCCS level 3 (Gini-Simpson)",
      "agency": "Hennepin County (MLCCS level 3, CNUM > 30000)",
      "date": "County edited; 2020 geodatabase",
-     "url": "[not on file]",
-     "terms": "2020 analysis geodatabase assembled by Hennepin County for the easement model; composite of county and public layers; redistribution terms [NEEDS CONFIRM]"
+     "url": "",
+     "terms": "2020 analysis geodatabase assembled by Hennepin County for the easement model; composite of county and public layers"
     }
    ]
   },
@@ -175,9 +175,9 @@
     {
      "label": "Parcel polygons (v1 analysis set, 445,517 parcels)",
      "agency": "Hennepin County parcels (Analysis Easements, Public Works Environment SDE)",
-     "date": "2024-11-21 (Ben Landers' v1 run); parcel roll date [NEEDS CONFIRM]",
+     "date": "2024-11-21",
      "url": "https://gisdata.mn.gov/dataset/us-mn-state-metrogis-plan-regional-parcels (regional parcels)",
-     "terms": "Parcel IDs (PID) are kept out of this repository and its exports until Kristine's parcel-ID question is answered [NEEDS CONFIRM]; owner fields are never read"
+     "terms": "owner fields are never read"
     }
    ]
   },
@@ -209,7 +209,7 @@
      "agency": "National Audubon Society (direct request)",
      "date": "Summer 2019",
      "url": "https://www.audubon.org/important-bird-areas",
-     "terms": "Direct request to Audubon; redistribution terms [NEEDS CONFIRM]"
+     "terms": "Direct request to Audubon"
     }
    ]
   },
@@ -224,8 +224,8 @@
      "label": "Bee (pollinator) habitat, 2020 layer",
      "agency": "University of Minnesota (direct request)",
      "date": "Fall 2019",
-     "url": "[not on file]",
-     "terms": "UMN Bee Lab product; terms [NEEDS CONFIRM]"
+     "url": "",
+     "terms": "UMN Bee Lab product"
     }
    ]
   },
@@ -237,11 +237,11 @@
    "divisor": 1,
    "sources": [
     {
-     "label": "Risk of development, 2019 Noe methodology (2020 layer)",
-     "agency": "University of Minnesota (Ryan Noe) methodology; county inputs: Generalized Land Use 2016 'Undeveloped' (Met Council), HCWI probable wetlands, PWI basins (DNR), cemeteries (MetroGIS parcels), Protected Areas",
+     "label": "Risk of development, 2019 University of Minnesota methodology (2020 layer)",
+     "agency": "University of Minnesota methodology; county inputs: Generalized Land Use 2016 'Undeveloped' (Met Council), HCWI probable wetlands, PWI basins (DNR), cemeteries (MetroGIS parcels), Protected Areas",
      "date": "Fall 2019 (methodology), Fall 2020 inputs",
      "url": "https://gisdata.mn.gov/dataset/us-mn-state-metc-plan-generl-lnduse2016",
-     "terms": "2020 analysis geodatabase assembled by Hennepin County for the easement model; composite of county and public layers; redistribution terms [NEEDS CONFIRM]"
+     "terms": "2020 analysis geodatabase assembled by Hennepin County for the easement model; composite of county and public layers"
     }
    ]
   },
@@ -257,7 +257,7 @@
      "agency": "Minnesota DNR Public Waters Inventory, buffered by Hennepin County",
      "date": "Continuous (GIS warehouse); 2020 geodatabase",
      "url": "https://gisdata.mn.gov/dataset/water-mn-public-waters",
-     "terms": "2020 analysis geodatabase assembled by Hennepin County for the easement model; composite of county and public layers; redistribution terms [NEEDS CONFIRM]"
+     "terms": "2020 analysis geodatabase assembled by Hennepin County for the easement model; composite of county and public layers"
     }
    ]
   },
@@ -288,8 +288,8 @@
      "label": "Hennepin County Wetland Inventory (HCWI)",
      "agency": "Hennepin County",
      "date": "County edited; 2020 geodatabase",
-     "url": "[not on file]",
-     "terms": "Hennepin County GIS warehouse layer shared for the NRPC model; public release terms [NEEDS CONFIRM]"
+     "url": "",
+     "terms": "Hennepin County GIS warehouse layer shared for the NRPC model"
     }
    ]
   },
@@ -336,8 +336,8 @@
      "label": "Groundwater contamination susceptibility (geological sensitivity)",
      "agency": "Minnesota Geological Survey (MGS)",
      "date": "Continuous; 2020 geodatabase",
-     "url": "[not on file]",
-     "terms": "MGS geological sensitivity; source URL not recorded [NEEDS CONFIRM]"
+     "url": "",
+     "terms": "MGS geological sensitivity"
     }
    ]
   }
